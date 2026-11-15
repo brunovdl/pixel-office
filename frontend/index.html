@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pixel Office</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <h1>Pixel Office</h1>
+        <span class="badge" id="feed-badge">eventos simulados</span>
+      </div>
+      <div class="controls">
+        <button id="btn-pause" type="button">Pausar</button>
+        <label>
+          Velocidade
+          <select id="sel-speed">
+            <option value="1">1x</option>
+            <option value="2">2x</option>
+            <option value="4">4x</option>
+          </select>
+        </label>
+      </div>
+    </header>
+    <main class="layout">
+      <section class="stage" id="stage">
+        <canvas id="office" aria-label="Escritório em pixel com os agentes"></canvas>
+      </section>
+      <aside class="side">
+        <section>
+          <h2>Equipe</h2>
+          <ul class="agents" id="agents"></ul>
+        </section>
+        <section class="log-section">
+          <h2>Eventos</h2>
+          <ol class="log" id="log"></ol>
+        </section>
+      </aside>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
