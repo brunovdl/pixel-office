@@ -155,10 +155,10 @@ export class Simulator implements EventFeed {
   }
 
   /** Responde a decisão pendente do agente. Devolve false se não havia. */
-  answerDecision(agentId: string): boolean {
+  answerDecision(agentId: string, answer = ""): boolean {
     const runner = this.runners.find((r) => r.id === agentId);
     if (!runner || runner.waitingUntil === null) return false;
-    this.resolveDecision(runner, this.now);
+    this.resolveDecision(runner, this.now, answer);
     return true;
   }
 
@@ -175,11 +175,15 @@ export class Simulator implements EventFeed {
     else runner.waitingUntil = runner.wakeAt + result.value.decisionTimeout;
   }
 
-  private resolveDecision(runner: Runner, at: number): void {
+  private resolveDecision(runner: Runner, at: number, answer = ""): void {
     this.clock = at;
     runner.waitingUntil = null;
     runner.wakeAt = at;
-    this.emit({ type: "decision_answered", agentId: runner.id });
+    this.emit({
+      type: "decision_answered",
+      agentId: runner.id,
+      ...(answer ? { answer } : {}),
+    });
   }
 
   private emit(event: DistributiveOmit<AgentEvent, "ts">): void {

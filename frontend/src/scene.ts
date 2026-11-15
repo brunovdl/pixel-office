@@ -90,8 +90,12 @@ export class OfficeScene {
     this.canvas.style.height = `${(HEIGHT * this.scale) / dpr}px`;
   }
 
-  /** Alinha os atores com o estado: cria, remove e atualiza status. */
-  sync(state: OfficeState): void {
+  /**
+   * Alinha os atores com o estado: cria, remove e atualiza status.
+   * Com `settled`, quem é novo já aparece no lugar em vez de entrar pela porta;
+   * serve para o estado recebido de uma vez ao conectar.
+   */
+  sync(state: OfficeState, settled = false): void {
     this.pending = pendingDecisions(state);
 
     for (const id of this.actors.keys()) {
@@ -119,6 +123,7 @@ export class OfficeScene {
           walkTime: 0,
         };
         this.actors.set(id, actor);
+        if (settled) this.settle(actor);
       }
       actor.name = agent.name;
       if (actor.status !== agent.status) {
@@ -190,6 +195,20 @@ export class OfficeScene {
     if (actor.desk === null) return false;
     if (AT_DESK.has(actor.status)) return true;
     return actor.status === "done" && actor.statusTime < DONE_AT_DESK_S;
+  }
+
+  /** Põe o ator direto onde ele estaria: na mesa, se trabalha, ou descansando. */
+  private settle(actor: Actor): void {
+    if (this.worksAtDesk(actor)) {
+      actor.pos = seatPoint(DESKS[actor.desk!]!);
+      actor.goal = "desk";
+      actor.seated = true;
+      return;
+    }
+    actor.spot = this.freeSpot(null);
+    actor.wander = 6 + Math.random() * 10;
+    actor.pos = standPoint(IDLE_SPOTS[actor.spot]!);
+    actor.goal = `spot${actor.spot}`;
   }
 
   private updateActor(actor: Actor, dt: number): void {

@@ -1,0 +1,166 @@
+[
+  {
+    "name": "agentes entram livres, na ordem de entrada",
+    "events": [
+      { "type": "agent_joined", "agentId": "a", "name": "A", "role": "dev", "ts": 1 },
+      { "type": "agent_joined", "agentId": "b", "name": "B", "role": "qa", "ts": 2 }
+    ],
+    "order": ["a", "b"],
+    "nextSeq": 2,
+    "agents": {
+      "a": { "name": "A", "role": "dev", "seq": 0, "status": "idle", "detail": "", "task": null, "question": null, "lastEventTs": 1 },
+      "b": { "seq": 1, "status": "idle" }
+    }
+  },
+  {
+    "name": "entrar de novo atualiza nome e papel sem mudar status nem seq",
+    "events": [
+      { "type": "agent_joined", "agentId": "a", "name": "A", "role": "dev", "ts": 1 },
+      { "type": "task_started", "agentId": "a", "task": "x", "ts": 2 },
+      { "type": "agent_joined", "agentId": "a", "name": "Novo", "role": "qa", "ts": 3 }
+    ],
+    "order": ["a"],
+    "nextSeq": 1,
+    "agents": { "a": { "name": "Novo", "role": "qa", "seq": 0, "status": "thinking", "task": "x", "lastEventTs": 3 } }
+  },
+  {
+    "name": "seq não é reaproveitado depois que um agente sai",
+    "events": [
+      { "type": "agent_joined", "agentId": "a", "name": "A", "role": "dev", "ts": 1 },
+      { "type": "agent_joined", "agentId": "b", "name": "B", "role": "dev", "ts": 2 },
+      { "type": "agent_left", "agentId": "a", "ts": 3 },
+      { "type": "agent_joined", "agentId": "c", "name": "C", "role": "dev", "ts": 4 }
+    ],
+    "order": ["b", "c"],
+    "nextSeq": 3,
+    "agents": { "b": { "seq": 1 }, "c": { "seq": 2 } }
+  },
+  {
+    "name": "evento de agente desconhecido é ignorado",
+    "events": [
+      { "type": "agent_joined", "agentId": "a", "name": "A", "role": "dev", "ts": 1 },
+      { "type": "thinking", "agentId": "fantasma", "ts": 2 },
+      { "type": "agent_left", "agentId": "fantasma", "ts": 3 }
+    ],
+    "order": ["a"],
+    "nextSeq": 1,
+    "agents": { "a": { "status": "idle", "lastEventTs": 1 } }
+  },
+  {
+    "name": "ferramenta de leitura",
+    "events": [
+      { "type": "agent_joined", "agentId": "a", "name": "A", "role": "dev", "ts": 1 },
+      { "type": "tool_started", "agentId": "a", "tool": "Grep", "detail": "TODO", "ts": 2 }
+    ],
+    "order": ["a"],
+    "agents": { "a": { "status": "reading", "detail": "Grep: TODO" } }
+  },
+  {
+    "name": "ferramenta de escrita",
+    "events": [
+      { "type": "agent_joined", "agentId": "a", "name": "A", "role": "dev", "ts": 1 },
+      { "type": "tool_started", "agentId": "a", "tool": "Edit", "detail": "api.py", "ts": 2 }
+    ],
+    "order": ["a"],
+    "agents": { "a": { "status": "writing", "detail": "Edit: api.py" } }
+  },
+  {
+    "name": "ferramenta desconhecida conta como execução e detalhe é opcional",
+    "events": [
+      { "type": "agent_joined", "agentId": "a", "name": "A", "role": "dev", "ts": 1 },
+      { "type": "tool_started", "agentId": "a", "tool": "mcp__x__fazer", "ts": 2 }
+    ],
+    "order": ["a"],
+    "agents": { "a": { "status": "running", "detail": "mcp__x__fazer" } }
+  },
+  {
+    "name": "ciclo completo de uma tarefa",
+    "events": [
+      { "type": "agent_joined", "agentId": "a", "name": "A", "role": "dev", "ts": 1 },
+      { "type": "task_started", "agentId": "a", "task": "Criar endpoint", "ts": 2 },
+      { "type": "tool_started", "agentId": "a", "tool": "Bash", "detail": "pytest -q", "ts": 3 },
+      { "type": "tool_finished", "agentId": "a", "tool": "Bash", "ok": true, "ts": 4 },
+      { "type": "task_finished", "agentId": "a", "ok": true, "ts": 5 }
+    ],
+    "order": ["a"],
+    "agents": { "a": { "status": "done", "task": "Criar endpoint", "detail": "Tarefa concluída", "lastEventTs": 5 } }
+  },
+  {
+    "name": "ferramenta concluída volta para pensando e mantém o detalhe",
+    "events": [
+      { "type": "agent_joined", "agentId": "a", "name": "A", "role": "dev", "ts": 1 },
+      { "type": "tool_started", "agentId": "a", "tool": "Bash", "detail": "pytest -q", "ts": 2 },
+      { "type": "tool_finished", "agentId": "a", "tool": "Bash", "ok": true, "ts": 3 }
+    ],
+    "order": ["a"],
+    "agents": { "a": { "status": "thinking", "detail": "Bash: pytest -q" } }
+  },
+  {
+    "name": "falha de ferramenta volta para pensando, não para erro",
+    "events": [
+      { "type": "agent_joined", "agentId": "a", "name": "A", "role": "dev", "ts": 1 },
+      { "type": "tool_started", "agentId": "a", "tool": "Bash", "ts": 2 },
+      { "type": "tool_finished", "agentId": "a", "tool": "Bash", "ok": false, "ts": 3 }
+    ],
+    "order": ["a"],
+    "agents": { "a": { "status": "thinking", "detail": "Bash falhou" } }
+  },
+  {
+    "name": "mensagem muda o detalhe sem mudar o status",
+    "events": [
+      { "type": "agent_joined", "agentId": "a", "name": "A", "role": "dev", "ts": 1 },
+      { "type": "tool_started", "agentId": "a", "tool": "Read", "ts": 2 },
+      { "type": "message", "agentId": "a", "text": "olá", "ts": 3 }
+    ],
+    "order": ["a"],
+    "agents": { "a": { "status": "reading", "detail": "olá" } }
+  },
+  {
+    "name": "aguardando decisão guarda a pergunta",
+    "events": [
+      { "type": "agent_joined", "agentId": "a", "name": "A", "role": "dev", "ts": 1 },
+      { "type": "waiting_decision", "agentId": "a", "question": "Pode?", "ts": 2 }
+    ],
+    "order": ["a"],
+    "agents": { "a": { "status": "waiting", "question": "Pode?", "detail": "Pode?" } }
+  },
+  {
+    "name": "decisão respondida limpa a pergunta",
+    "events": [
+      { "type": "agent_joined", "agentId": "a", "name": "A", "role": "dev", "ts": 1 },
+      { "type": "waiting_decision", "agentId": "a", "question": "Pode?", "ts": 2 },
+      { "type": "decision_answered", "agentId": "a", "answer": "Pode", "ts": 3 }
+    ],
+    "order": ["a"],
+    "agents": { "a": { "status": "thinking", "question": null, "detail": "Decisão recebida", "lastEventTs": 3 } }
+  },
+  {
+    "name": "resposta sem decisão pendente não muda o status",
+    "events": [
+      { "type": "agent_joined", "agentId": "a", "name": "A", "role": "dev", "ts": 1 },
+      { "type": "tool_started", "agentId": "a", "tool": "Read", "ts": 2 },
+      { "type": "decision_answered", "agentId": "a", "ts": 3 }
+    ],
+    "order": ["a"],
+    "agents": { "a": { "status": "reading", "detail": "Read", "lastEventTs": 3 } }
+  },
+  {
+    "name": "sair da espera por outro evento limpa a pergunta",
+    "events": [
+      { "type": "agent_joined", "agentId": "a", "name": "A", "role": "dev", "ts": 1 },
+      { "type": "waiting_decision", "agentId": "a", "question": "Pode?", "ts": 2 },
+      { "type": "error", "agentId": "a", "message": "caiu", "ts": 3 }
+    ],
+    "order": ["a"],
+    "agents": { "a": { "status": "error", "question": null, "detail": "caiu" } }
+  },
+  {
+    "name": "tarefa que falha termina em erro",
+    "events": [
+      { "type": "agent_joined", "agentId": "a", "name": "A", "role": "dev", "ts": 1 },
+      { "type": "task_finished", "agentId": "a", "ok": false, "ts": 2 }
+    ],
+    "order": ["a"],
+    "agents": { "a": { "status": "error", "detail": "Tarefa falhou" } }
+  }
+]

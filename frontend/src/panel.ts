@@ -35,7 +35,7 @@ export function describe(event: AgentEvent): string | null {
     case "waiting_decision":
       return `pede decisão: ${event.question}`;
     case "decision_answered":
-      return "recebeu a decisão";
+      return event.answer ? `recebeu a decisão: ${event.answer}` : "seguiu sem resposta";
     case "task_finished":
       return event.ok ? "concluiu a tarefa" : "não concluiu a tarefa";
     case "error":
@@ -57,13 +57,25 @@ function el<K extends keyof HTMLElementTagNameMap>(
 }
 
 export class Panel {
+  /** Respostas em digitação, por agente; a lista é refeita a cada evento. */
+  private readonly drafts = new Map<string, string>();
+
   constructor(
     private readonly agentsEl: HTMLElement,
     private readonly logEl: HTMLElement,
-    private readonly onAnswer: (agentId: string) => void,
+    private readonly onAnswer: (agentId: string, answer: string) => void,
   ) {}
 
   renderAgents(state: OfficeState): void {
+    const focused = document.activeElement;
+    const typing =
+      focused instanceof HTMLInputElement && this.agentsEl.contains(focused)
+        ? { id: focused.dataset.agent, start: focused.selectionStart, end: focused.selectionEnd }
+        : null;
+    for (const id of this.drafts.keys()) {
+      if (state.agents[id]?.status !== "waiting") this.drafts.delete(id);
+    }
+
     const cards = state.order.map((id) => {
       const agent = state.agents[id]!;
       const card = el("li", `agent status-${agent.status}`);
@@ -79,15 +91,46 @@ export class Panel {
       if (agent.status !== "idle" && agent.detail) {
         card.append(el("div", "agent-detail", agent.detail));
       }
-      if (agent.status === "waiting") {
-        const button = el("button", "agent-answer", "Responder");
-        button.type = "button";
-        button.addEventListener("click", () => this.onAnswer(agent.id));
-        card.append(button);
-      }
+      if (agent.status === "waiting") card.append(this.answerForm(agent.id));
       return card;
     });
     this.agentsEl.replaceChildren(...cards);
+
+    if (typing?.id) {
+      const input = this.agentsEl.querySelector<HTMLInputElement>(
+        `input[data-agent="${CSS.escape(typing.id)}"]`,
+      );
+      input?.focus();
+      input?.setSelectionRange(typing.start, typing.end);
+    }
+  }
+
+  private answerForm(agentId: string): HTMLFormElement {
+    const form = el("form", "agent-answer");
+    const input = el("input", "agent-answer-input");
+    input.type = "text";
+    input.placeholder = "Sua resposta";
+    input.maxLength = 4000;
+    input.autocomplete = "off";
+    input.dataset.agent = agentId;
+    input.setAttribute("aria-label", "Resposta para o agente");
+    input.value = this.drafts.get(agentId) ?? "";
+    input.addEventListener("input", () => this.drafts.set(agentId, input.value));
+
+    const button = el("button", "agent-answer-send", "Responder");
+    button.type = "submit";
+    form.append(input, button);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const answer = input.value.trim();
+      if (!answer) {
+        input.focus();
+        return;
+      }
+      this.drafts.delete(agentId);
+      this.onAnswer(agentId, answer);
+    });
+    return form;
   }
 
   addEvent(event: AgentEvent, state: OfficeState): void {

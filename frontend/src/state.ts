@@ -146,6 +146,15 @@ function withAgent(state: OfficeState, agent: AgentState): OfficeState {
   return { ...state, agents: { ...state.agents, [agent.id]: agent } };
 }
 
+/** Monta o estado a partir do snapshot que o backend envia ao conectar. */
+export function stateFromSnapshot(agents: readonly AgentState[], nextSeq: number): OfficeState {
+  return {
+    agents: Object.fromEntries(agents.map((agent) => [agent.id, agent])),
+    order: agents.map((agent) => agent.id),
+    nextSeq,
+  };
+}
+
 export function pendingDecisions(state: OfficeState): number {
   return state.order.filter((id) => state.agents[id]?.status === "waiting").length;
 }
