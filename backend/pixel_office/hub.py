@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from .board import Board
 from .events import AgentEvent, parse_event, to_wire
 from .state import OfficeState
 
@@ -30,9 +31,10 @@ def now_ms() -> int:
 class Subscription:
     """Estado no momento da assinatura e a fila dos eventos seguintes.
 
-    O snapshot traz também `recent`, os últimos eventos em ordem de chegada.
-
-    Um `None` na fila avisa que o assinante ficou para trás e foi removido.
+    O snapshot traz também `recent` (os últimos eventos, em ordem de chegada) e
+    `board` (tarefas e specs). A fila recebe mensagens prontas para o WebSocket:
+    `{"kind": "event", ...}` ou `{"kind": "board", ...}`. Um `None` avisa que o
+    assinante ficou para trás e foi removido.
     """
 
     snapshot: dict[str, Any]
@@ -40,8 +42,10 @@ class Subscription:
 
 
 class Hub:
-    def __init__(self, clock: Callable[[], int] = now_ms) -> None:
+    def __init__(self, clock: Callable[[], int] = now_ms, board: Board | None = None) -> None:
         self.state = OfficeState()
+        self.board = board or Board(clock=clock)
+        self.board.on_change(self._board_changed)
         self._clock = clock
         self._subscriptions: set[Subscription] = set()
         self._decisions: dict[str, asyncio.Future[str | None]] = {}
@@ -56,11 +60,7 @@ class Hub:
         self.state.apply(event)
         wire = to_wire(event)
         self._history.append(wire)
-        for subscription in list(self._subscriptions):
-            try:
-                subscription.queue.put_nowait(wire)
-            except asyncio.QueueFull:
-                self._drop(subscription)
+        self._broadcast({"kind": "event", "event": wire})
 
     def emit(self, type: str, agent_id: str, **fields: Any) -> AgentEvent:
         """Monta, valida e publica um evento com o horário atual."""
@@ -81,7 +81,11 @@ class Hub:
         # Snapshot e inscrição acontecem sem `await` entre eles, então nenhum
         # evento se perde nem chega duplicado.
         subscription = Subscription(
-            snapshot={**self.state.snapshot(), "recent": list(self._history)},
+            snapshot={
+                **self.state.snapshot(),
+                "recent": list(self._history),
+                "board": self.board.summary(),
+            },
             queue=asyncio.Queue(maxsize=QUEUE_LIMIT),
         )
         self._subscriptions.add(subscription)
@@ -123,6 +127,16 @@ class Hub:
         if future and not future.done():
             future.set_result(answer)
         return True
+
+    def _board_changed(self) -> None:
+        self._broadcast({"kind": "board", **self.board.summary()})
+
+    def _broadcast(self, message: dict[str, Any]) -> None:
+        for subscription in list(self._subscriptions):
+            try:
+                subscription.queue.put_nowait(message)
+            except asyncio.QueueFull:
+                self._drop(subscription)
 
     def _drop(self, subscription: Subscription) -> None:
         self._subscriptions.discard(subscription)

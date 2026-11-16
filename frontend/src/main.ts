@@ -1,3 +1,5 @@
+import { BoardApi, type BoardData } from "./board";
+import { SpecsView, TasksView } from "./boardviews";
 import type { AgentEvent } from "./events";
 import { EventHistory } from "./history";
 import { OfficeScene } from "./scene";
@@ -73,10 +75,22 @@ function backendUrl(): string {
   return url.toString();
 }
 
+let board: BoardData = { tasks: [], specs: [] };
+let boardVersion = 0;
+
+const api = simulator
+  ? null
+  : new BoardApi(backendUrl().replace(/^ws/, "http"), params.get("token"));
+
 const backend = simulator
   ? null
   : new WebSocketFeed({
       url: backendUrl(),
+      onBoard: (next) => {
+        board = next;
+        boardVersion++;
+        scheduleRender();
+      },
       onSnapshot: (snapshot, recent) => {
         history.replace(recent);
         state = snapshot;
@@ -106,6 +120,8 @@ interface DockItem {
   label: string;
   icon: string;
   badge?: () => number;
+  /** Contagem que pede atenção (amarela) em vez de informativa. */
+  alert?: boolean;
 }
 
 const conversations = new ConversationsView(
@@ -131,6 +147,36 @@ const decisions = new DecisionsView(
   forms,
   openConversation,
 );
+const tasksView = new TasksView(
+  wm.register({
+    id: "tarefas",
+    title: "Quadro de tarefas",
+    size: { w: 860, h: 560 },
+    min: { w: 380, h: 260 },
+    bodyClass: "board",
+  }),
+  api,
+  (specId) => {
+    specsView.update(board, boardVersion, state);
+    specsView.openSpec(specId);
+    wm.open("specs");
+  },
+);
+const specsView: SpecsView = new SpecsView(
+  wm.register({
+    id: "specs",
+    title: "Quadro de specs",
+    size: { w: 900, h: 600 },
+    min: { w: 400, h: 260 },
+    bodyClass: "board",
+  }),
+  api,
+  (taskId) => {
+    tasksView.update(board, boardVersion, state);
+    tasksView.openTask(taskId);
+    wm.open("tarefas");
+  },
+);
 const agents = new AgentsView(
   wm.register({
     id: "agentes",
@@ -144,7 +190,26 @@ const agents = new AgentsView(
 
 const DOCK: DockItem[] = [
   { id: "conversas", label: "Conversas", icon: "✉" },
-  { id: "decisoes", label: "Decisões", icon: "?", badge: () => pendingDecisions(state) },
+  {
+    id: "tarefas",
+    label: "Tarefas",
+    icon: "≡",
+    badge: () => board.tasks.filter((task) => task.status === "blocked").length,
+    alert: true,
+  },
+  {
+    id: "specs",
+    label: "Specs",
+    icon: "≡",
+    badge: () => board.specs.filter((spec) => spec.status === "draft").length,
+  },
+  {
+    id: "decisoes",
+    label: "Decisões",
+    icon: "?",
+    badge: () => pendingDecisions(state),
+    alert: true,
+  },
   { id: "agentes", label: "Agentes", icon: "⚙" },
 ];
 
@@ -173,7 +238,7 @@ function updateDock(): void {
     const value = item.badge?.() ?? 0;
     count.hidden = value === 0;
     count.textContent = String(value);
-    node.classList.toggle("has-alert", value > 0);
+    node.classList.toggle("has-alert", value > 0 && item.alert === true);
   }
 }
 
@@ -216,6 +281,8 @@ function render(): void {
   if (wm.isOpen("conversas")) conversations.render(state, history);
   if (wm.isOpen("decisoes")) decisions.render(state, history);
   if (wm.isOpen("agentes")) agents.render(state);
+  if (wm.isOpen("tarefas")) tasksView.update(board, boardVersion, state);
+  if (wm.isOpen("specs")) specsView.update(board, boardVersion, state);
   updateDock();
 }
 

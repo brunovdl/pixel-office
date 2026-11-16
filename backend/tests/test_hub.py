@@ -40,9 +40,8 @@ def test_subscriber_gets_snapshot_then_only_later_events():
             assert subscription.queue.empty()
             hub.emit("thinking", "a")
             assert subscription.queue.get_nowait() == {
-                "type": "thinking",
-                "agentId": "a",
-                "ts": 1001,
+                "kind": "event",
+                "event": {"type": "thinking", "agentId": "a", "ts": 1001},
             }
             assert hub.subscriber_count == 1
         assert hub.subscriber_count == 0
@@ -105,7 +104,7 @@ def test_request_decision_times_out_and_releases_the_agent():
             assert await hub.request_decision("a", "Pode?", timeout=0.01) is None
             types = []
             while not subscription.queue.empty():
-                types.append(subscription.queue.get_nowait()["type"])
+                types.append(subscription.queue.get_nowait()["event"]["type"])
         assert types == ["waiting_decision", "decision_answered"]
         assert hub.state.agents["a"].status == "thinking"
 

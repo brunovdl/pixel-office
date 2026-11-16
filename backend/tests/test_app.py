@@ -157,3 +157,68 @@ def test_serves_built_frontend(tmp_path):
     with TestClient(create_app(Hub(), static_dir=tmp_path)) as client:
         assert "Pixel Office" in client.get("/").text
         assert client.get("/api/health").status_code == 200
+
+
+class TestBoardApi:
+    def test_task_crud(self, client):
+        created = client.post("/api/tasks", json={"title": "Criar endpoint", "agentId": "be"})
+        assert created.status_code == 201
+        task_id = created.json()["id"]
+
+        response = client.patch(f"/api/tasks/{task_id}", json={"status": "review"})
+        assert response.json()["status"] == "review"
+        assert client.get(f"/api/tasks/{task_id}").json()["agentId"] == "be"
+        assert [t["id"] for t in client.get("/api/tasks").json()["tasks"]] == [task_id]
+
+        assert client.delete(f"/api/tasks/{task_id}").status_code == 204
+        assert client.get(f"/api/tasks/{task_id}").status_code == 404
+
+    def test_spec_crud(self, client):
+        created = client.post("/api/specs", json={"title": "Login", "criteria": ["a", "b"]})
+        assert created.status_code == 201
+        spec_id = created.json()["id"]
+        assert client.get("/api/specs").json()["specs"][0]["criteriaCount"] == 2
+
+        client.patch(f"/api/specs/{spec_id}", json={"status": "approved", "body": "# Login"})
+        full = client.get(f"/api/specs/{spec_id}").json()
+        assert (full["status"], full["body"], full["criteria"]) == (
+            "approved",
+            "# Login",
+            ["a", "b"],
+        )
+
+        assert client.delete(f"/api/specs/{spec_id}").status_code == 204
+        assert client.get(f"/api/specs/{spec_id}").status_code == 404
+
+    def test_errors(self, client):
+        assert client.post("/api/tasks", json={"title": ""}).status_code == 422
+        assert client.post("/api/tasks", json={"title": "x", "status": "feito"}).status_code == 422
+        bad_spec = client.post("/api/tasks", json={"title": "x", "specId": 99})
+        assert (bad_spec.status_code, bad_spec.json()["detail"]) == (422, "Spec 99 não existe")
+        missing = client.patch("/api/tasks/5", json={"status": "done"})
+        assert (missing.status_code, missing.json()["detail"]) == (404, "Tarefa 5 não existe")
+        assert client.patch("/api/tasks/5", json={"title": None}).status_code == 422
+
+    def test_websocket_gets_board_in_snapshot_and_on_every_change(self, client):
+        client.post("/api/specs", json={"title": "Login"})
+        with client.websocket_connect("/ws") as ws:
+            board = ws.receive_json()["board"]
+            assert [s["title"] for s in board["specs"]] == ["Login"]
+            assert board["tasks"] == []
+
+            client.post("/api/tasks", json={"title": "Tela", "specId": 1})
+            message = ws.receive_json()
+            assert message["kind"] == "board"
+            assert [(t["title"], t["specId"]) for t in message["tasks"]] == [("Tela", 1)]
+            assert message["specs"][0]["title"] == "Login"
+
+
+def test_board_routes_require_token():
+    with TestClient(create_app(Hub(), token="segredo")) as client:
+        routes = (("get", "/api/tasks"), ("get", "/api/specs"), ("delete", "/api/tasks/1"))
+        for method, url in routes:
+            assert getattr(client, method)(url).status_code == 401
+        response = client.post(
+            "/api/tasks", json={"title": "x"}, headers={"Authorization": "Bearer segredo"}
+        )
+        assert response.status_code == 201

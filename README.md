@@ -13,7 +13,7 @@ ligado ainda: quem gera os eventos é um time simulado.
 | Parte | Situação |
 | --- | --- |
 | Escritório em pixel (`frontend/`) | Funciona, ligado ao backend, com janelas flutuantes |
-| Backend em Python (`backend/`) | Funciona: estado, WebSocket, entrada de eventos por HTTP |
+| Backend em Python (`backend/`) | Funciona: estado, WebSocket, entrada de eventos por HTTP, tarefas e specs em SQLite |
 | Protocolo de eventos | `backend/pixel_office/events.py` e `frontend/src/events.ts` |
 | Adaptador Groq | Não começou |
 | Adaptador Claude Code | Não começou |
@@ -55,6 +55,7 @@ Sem backend, `http://localhost:5173/?sim` roda um simulador dentro do navegador
 | `--simulate` | desligado | Roda o time simulado |
 | `--speed N` | 1 | Acelera o simulador |
 | `--seed N` | 1 | Semente do simulador |
+| `--db`, `PIXEL_OFFICE_DB` | `backend/data/pixel-office.db` | Arquivo SQLite de tarefas e specs. Com `--simulate` e sem `--db`, fica só em memória |
 | `--host`, `PIXEL_OFFICE_HOST` | `127.0.0.1` | Endereço de escuta |
 | `--port`, `PIXEL_OFFICE_PORT` | `8000` | Porta |
 | `PIXEL_OFFICE_TOKEN` | sem token | Exige o token no WebSocket e nas rotas de API |
@@ -90,6 +91,7 @@ adaptador (simulador hoje) -> Hub -> WebSocket -> reduce(estado, evento) -> cena
 | `events.py` | Modelos e validação dos eventos |
 | `state.py` | Estado do escritório derivado dos eventos |
 | `hub.py` | Guarda o estado, distribui eventos e controla decisões pendentes |
+| `board.py` | Tarefas e specs em SQLite, com validação |
 | `app.py` | Rotas HTTP e o WebSocket |
 | `simulator.py` | Time falso que publica no hub |
 | `__main__.py` | Linha de comando |
@@ -113,6 +115,10 @@ curl -X POST localhost:8000/api/events -H 'content-type: application/json' \
 | `GET /api/health` | Situação do servidor |
 | `GET /api/state` | Estado atual de todos os agentes |
 | `POST /api/events` | Publica um evento; 422 com os erros se for inválido |
+| `GET/POST /api/tasks` | Lista ou cria tarefas |
+| `GET/PATCH/DELETE /api/tasks/{id}` | Lê, altera (só os campos enviados) ou exclui uma tarefa |
+| `GET/POST /api/specs` | Lista (resumo, sem o texto) ou cria specs |
+| `GET/PATCH/DELETE /api/specs/{id}` | Lê com texto e critérios, altera ou exclui uma spec |
 | `WS /ws` | Estado ao conectar e eventos em seguida |
 
 Mensagens do WebSocket:
@@ -121,6 +127,7 @@ Mensagens do WebSocket:
 | --- | --- |
 | servidor -> tela | `{"kind":"snapshot","agents":[...],"nextSeq":n,"recent":[...]}` ao conectar (`recent` traz os últimos 500 eventos) |
 | servidor -> tela | `{"kind":"event","event":{...}}` a cada evento |
+| servidor -> tela | `{"kind":"board","tasks":[...],"specs":[...]}` a cada mudança em tarefas ou specs (o snapshot também traz `board`) |
 | servidor -> tela | `{"kind":"error","message":"..."}` quando recusa um comando |
 | tela -> servidor | `{"kind":"answer_decision","agentId":"be","answer":"Pode"}` |
 
@@ -136,6 +143,8 @@ dois lados e nesse arquivo.
 | `wsfeed.ts` | Conexão com o backend, com reconexão automática |
 | `windows.ts`, `geometry.ts` | Janelas flutuantes: mover, redimensionar, minimizar, maximizar |
 | `views.ts` | Conteúdo das janelas (Conversas, Decisões, Agentes) e dos painéis |
+| `boardviews.ts`, `board.ts` | Janelas de Tarefas e Specs, filtros e cliente da API |
+| `markdown.ts` | Markdown simples do texto das specs, sem HTML |
 | `history.ts`, `timeline.ts` | Eventos recentes e o histórico de cada agente |
 | `ui.ts` | Textos de status, formulário de resposta e utilitários de tela |
 | `state.ts` | Máquina de estados dos agentes (`reduce`) |
@@ -183,6 +192,8 @@ Os botões no topo abrem as janelas:
 
 | Janela | Conteúdo |
 | --- | --- |
+| Tarefas | Abas por status com contagem (Ativas, Pendentes, Em andamento, Em revisão, Bloqueadas, Concluídas, Todas), busca por ID, título ou agente, criar, editar e excluir. O botão mostra quantas estão bloqueadas |
+| Specs | Abas por status (Rascunho, Aprovada, Em implementação, Implementada), busca, detalhe com critérios de aceite, tarefas ligadas e texto em markdown, botão Aprovar, criar, editar e excluir. O botão mostra quantos rascunhos há |
 | Conversas | Histórico de cada agente: tarefas, ferramentas, mensagens, perguntas e respostas. Quando o agente pede decisão, a resposta vai pelo rodapé |
 | Decisões | Decisões pendentes com campo de resposta e as respondidas recentemente. O botão mostra quantas estão pendentes. No time simulado, a decisão sem resposta se resolve sozinha em 60 segundos |
 | Agentes | Papel, status, tarefa atual e última atividade de cada agente |
@@ -192,6 +203,11 @@ Toda janela pode ser:
 - movida arrastando a barra de título;
 - redimensionada puxando qualquer borda ou canto;
 - minimizada (`_`), maximizada ou restaurada (`□`/`❐`, ou duplo clique na barra) e fechada (`✕` ou `Esc`).
+
+Tarefas e specs se ligam: a tarefa mostra sua spec (clique para abrir) e a spec
+lista suas tarefas (clique para editar). Excluir pede um segundo clique. Excluir uma
+spec mantém as tarefas, sem spec. No time simulado, cada agente pega a tarefa
+pendente mais antiga atribuída a ele, inclusive as que você criar.
 
 O botão no topo abre a janela, traz para a frente ou minimiza se ela já estiver em
 foco. Posição, tamanho e quais janelas estavam abertas ficam salvos no navegador.

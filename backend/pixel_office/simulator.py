@@ -4,6 +4,7 @@ import asyncio
 import random
 from dataclasses import dataclass
 
+from .board import Board, SpecCreate, TaskCreate, TaskUpdate
 from .hub import Hub
 
 
@@ -89,6 +90,61 @@ QUESTIONS = (
 
 DECISION_TIMEOUT_S = 60.0
 
+# Tarefas encerradas (concluídas ou bloqueadas) mantidas no quadro simulado.
+FINISHED_LIMIT = 40
+
+SEED_SPECS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
+    (
+        "Login com e-mail e senha",
+        "implemented",
+        (
+            "Usuário entra com e-mail e senha válidos",
+            "Senha errada mostra mensagem sem dizer se o e-mail existe",
+            "Cinco tentativas erradas bloqueiam por 15 minutos",
+            "Sessão expira depois de 30 dias sem uso",
+            "Logout encerra a sessão em todos os dispositivos",
+        ),
+        "## Objetivo\n\nPermitir que o usuário entre com e-mail e senha.\n\n"
+        "## Fora do escopo\n\n- Login social\n- Autenticação em dois fatores",
+    ),
+    (
+        "Relatórios mensais por categoria",
+        "in_progress",
+        (
+            "Relatório mostra total gasto por categoria no mês escolhido",
+            "Comparação com o mês anterior em percentual",
+            "Categorias sem gasto não aparecem",
+            "Relatório abre em menos de 2 segundos com 10 mil transações",
+        ),
+        "## Objetivo\n\nMostrar para onde foi o dinheiro em cada mês.\n\n"
+        "## Dados\n\nUsa a tabela `transactions`, agrupada por `category_id`.",
+    ),
+    (
+        "Exportar transações em CSV",
+        "draft",
+        (
+            "Usuário escolhe o período antes de exportar",
+            "Arquivo usa ponto e vírgula e codificação UTF-8",
+            "Valores negativos saem com sinal de menos",
+        ),
+        "## Objetivo\n\nLevar as transações para uma planilha.\n\n"
+        "## Em aberto\n\n- Incluir transações excluídas?",
+    ),
+)
+
+# (agente, título, índice da spec, status)
+SEED_TASKS: tuple[tuple[str, str, int, str], ...] = (
+    ("be", "Criar endpoint de login", 0, "done"),
+    ("fe", "Tela de login", 0, "done"),
+    ("qa", "Testes de bloqueio por tentativas", 0, "done"),
+    ("orq", "Planejar entrega dos relatórios", 1, "pending"),
+    ("be", "Endpoint de relatório mensal", 1, "pending"),
+    ("fe", "Tela de relatório com gráfico", 1, "pending"),
+    ("qa", "Testes do relatório mensal", 1, "pending"),
+    ("rev", "Revisar PR do relatório mensal", 1, "pending"),
+    ("spec", "Detalhar spec de exportação CSV", 2, "pending"),
+)
+
 
 class Simulator:
     def __init__(self, hub: Hub, *, seed: int = 1, speed: float = 1.0) -> None:
@@ -100,6 +156,8 @@ class Simulator:
 
     async def run(self) -> None:
         """Roda até ser cancelado."""
+        if self.hub.board.is_empty():
+            seed_board(self.hub.board)
         async with asyncio.TaskGroup() as group:
             for index, member in enumerate(TEAM):
                 group.create_task(self._agent(member, index))
@@ -118,7 +176,8 @@ class Simulator:
 
         while True:
             await self._sleep(rng.uniform(3, 10))
-            hub.emit("task_started", agent_id, task=rng.choice(member.tasks))
+            task_id, title = self._claim(member, rng)
+            hub.emit("task_started", agent_id, task=title)
             await self._sleep(rng.uniform(1, 3))
 
             steps = rng.randint(3, 7)
@@ -142,12 +201,74 @@ class Simulator:
                 await self._sleep(rng.uniform(0.8, 2.5))
 
             if rng.random() < 0.9:
+                self._finish(task_id, "done")
                 hub.emit("task_finished", agent_id, ok=True)
             else:
                 hub.emit("error", agent_id, message="Limite de tentativas atingido")
                 await self._sleep(4)
+                self._finish(task_id, "blocked")
                 hub.emit("task_finished", agent_id, ok=False)
                 await self._sleep(3)
+
+    def _claim(self, member: Member, rng: random.Random) -> tuple[int | None, str]:
+        """Pega a tarefa pendente mais antiga do agente, ou cria uma nova."""
+        board = self.hub.board
+        pending = [
+            task
+            for task in board.tasks()
+            if task["agentId"] == member.id and task["status"] == "pending"
+        ]
+        if pending:
+            task = board.update_task(pending[0]["id"], TaskUpdate(status="in_progress"))
+        else:
+            open_specs = [
+                spec["id"]
+                for spec in board.specs()
+                if spec["status"] in ("approved", "in_progress")
+            ]
+            task = board.create_task(
+                TaskCreate(
+                    title=rng.choice(member.tasks),
+                    status="in_progress",
+                    agent_id=member.id,
+                    spec_id=rng.choice(open_specs) if open_specs else None,
+                )
+            )
+        return task["id"], task["title"]
+
+    def _finish(self, task_id: int | None, status: str) -> None:
+        board = self.hub.board
+        if task_id is None:
+            return
+        try:
+            board.update_task(task_id, TaskUpdate.model_validate({"status": status}))
+        except ValueError:
+            # O usuário pode ter excluído a tarefa enquanto o agente trabalhava.
+            return
+        finished = [t for t in board.tasks() if t["status"] in ("done", "blocked")]
+        for task in finished[: max(0, len(finished) - FINISHED_LIMIT)]:
+            board.delete_task(task["id"])
+
+
+def seed_board(board: Board) -> None:
+    """Specs e tarefas de exemplo para o quadro do time simulado."""
+    spec_ids = [
+        board.create_spec(
+            SpecCreate(title=title, status=status, criteria=list(criteria), body=body)
+        )["id"]
+        for title, status, criteria, body in SEED_SPECS
+    ]
+    for agent_id, title, spec_index, status in SEED_TASKS:
+        board.create_task(
+            TaskCreate.model_validate(
+                {
+                    "title": title,
+                    "status": status,
+                    "agentId": agent_id,
+                    "specId": spec_ids[spec_index],
+                }
+            )
+        )
 
 
 def _detail(rng: random.Random, tool: str) -> str:

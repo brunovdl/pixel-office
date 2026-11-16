@@ -9,10 +9,21 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
+from .board import BoardError, NotFound, SpecCreate, SpecUpdate, TaskCreate, TaskUpdate
 from .hub import Hub, Subscription
 from .simulator import Simulator
 
@@ -54,6 +65,12 @@ def create_app(
 
     app = FastAPI(title="Pixel Office", lifespan=lifespan)
     app.state.hub = hub
+    board = hub.board
+
+    @app.exception_handler(BoardError)
+    async def board_error(_: Request, exc: BoardError) -> JSONResponse:
+        code = 404 if isinstance(exc, NotFound) else 422
+        return JSONResponse({"detail": str(exc)}, status_code=code)
 
     def token_ok(given: str | None) -> bool:
         if token is None:
@@ -79,14 +96,19 @@ def create_app(
             "simulator": simulator is not None,
         }
 
-    @app.get("/api/state")
-    async def state(request: Request) -> dict[str, Any]:
-        require_bearer(request)
+    def require_bearer(request: Request) -> None:
+        scheme, _, given = request.headers.get("authorization", "").partition(" ")
+        if token is not None and (scheme.lower() != "bearer" or not token_ok(given)):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token ausente ou inválido")
+
+    auth = [Depends(require_bearer)]
+
+    @app.get("/api/state", dependencies=auth)
+    async def state() -> dict[str, Any]:
         return hub.state.snapshot()
 
-    @app.post("/api/events", status_code=status.HTTP_202_ACCEPTED)
+    @app.post("/api/events", status_code=status.HTTP_202_ACCEPTED, dependencies=auth)
     async def post_event(request: Request) -> dict[str, bool]:
-        require_bearer(request)
         try:
             data = await request.json()
         except json.JSONDecodeError as exc:
@@ -100,10 +122,49 @@ def create_app(
             ) from exc
         return {"ok": True}
 
-    def require_bearer(request: Request) -> None:
-        scheme, _, given = request.headers.get("authorization", "").partition(" ")
-        if token is not None and (scheme.lower() != "bearer" or not token_ok(given)):
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token ausente ou inválido")
+    # Tarefas e specs. Toda mudança chega às telas pelo WebSocket ("board").
+
+    @app.get("/api/tasks", dependencies=auth)
+    async def list_tasks() -> dict[str, Any]:
+        return {"tasks": board.tasks()}
+
+    @app.post("/api/tasks", status_code=status.HTTP_201_CREATED, dependencies=auth)
+    async def create_task(data: TaskCreate) -> dict[str, Any]:
+        return board.create_task(data)
+
+    @app.get("/api/tasks/{task_id}", dependencies=auth)
+    async def get_task(task_id: int) -> dict[str, Any]:
+        return board.task(task_id)
+
+    @app.patch("/api/tasks/{task_id}", dependencies=auth)
+    async def update_task(task_id: int, data: TaskUpdate) -> dict[str, Any]:
+        return board.update_task(task_id, data)
+
+    @app.delete("/api/tasks/{task_id}", status_code=204, dependencies=auth)
+    async def delete_task(task_id: int) -> Response:
+        board.delete_task(task_id)
+        return Response(status_code=204)
+
+    @app.get("/api/specs", dependencies=auth)
+    async def list_specs() -> dict[str, Any]:
+        return {"specs": board.specs()}
+
+    @app.post("/api/specs", status_code=status.HTTP_201_CREATED, dependencies=auth)
+    async def create_spec(data: SpecCreate) -> dict[str, Any]:
+        return board.create_spec(data)
+
+    @app.get("/api/specs/{spec_id}", dependencies=auth)
+    async def get_spec(spec_id: int) -> dict[str, Any]:
+        return board.spec(spec_id)
+
+    @app.patch("/api/specs/{spec_id}", dependencies=auth)
+    async def update_spec(spec_id: int, data: SpecUpdate) -> dict[str, Any]:
+        return board.update_spec(spec_id, data)
+
+    @app.delete("/api/specs/{spec_id}", status_code=204, dependencies=auth)
+    async def delete_spec(spec_id: int) -> Response:
+        board.delete_spec(spec_id)
+        return Response(status_code=204)
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket) -> None:
@@ -132,12 +193,12 @@ def create_app(
 
 async def _send_events(websocket: WebSocket, subscription: Subscription) -> None:
     while True:
-        event = await subscription.queue.get()
-        if event is None:
+        message = await subscription.queue.get()
+        if message is None:
             await websocket.close(code=WS_TRY_AGAIN_LATER, reason="cliente lento")
             return
         try:
-            await websocket.send_json({"kind": "event", "event": event})
+            await websocket.send_json(message)
         except (WebSocketDisconnect, RuntimeError):
             return
 

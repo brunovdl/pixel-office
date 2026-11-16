@@ -86,6 +86,27 @@ describe("WebSocketFeed", () => {
     expect(events).toEqual([event]);
   });
 
+  it("entrega o quadro do snapshot e das atualizações", () => {
+    const boards: unknown[] = [];
+    const sockets: FakeSocket[] = [];
+    const feed = new WebSocketFeed({
+      url: "ws://teste/ws",
+      onSnapshot: () => {},
+      onBoard: (board) => boards.push(board),
+      createSocket: (url) => {
+        const socket = new FakeSocket(url);
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    feed.start();
+    const board = { tasks: [], specs: [{ id: 1 }] };
+    sockets[0]!.receive({ kind: "snapshot", agents: [], nextSeq: 0, board });
+    sockets[0]!.receive({ kind: "board", tasks: [{ id: 2 }], specs: [] });
+    sockets[0]!.receive({ kind: "snapshot", agents: [], nextSeq: 0 });
+    expect(boards).toEqual([board, { tasks: [{ id: 2 }], specs: [] }]);
+  });
+
   it("repassa recusas do backend e ignora mensagens que não entende", () => {
     const { feed, sockets, snapshots, events, errors } = setup();
     feed.start();
