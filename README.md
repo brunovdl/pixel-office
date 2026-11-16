@@ -303,6 +303,39 @@ Limites atuais:
   isso o padrão é uma execução por vez;
 - Cursor e Antigravity ainda não rodam.
 
+## Deploy no EasyPanel (Docker)
+
+O `Dockerfile` da raiz monta uma imagem única: o frontend compilado, o backend e o
+Claude Code. O servidor roda como o usuário `node`, porque o Claude Code recusa
+"Liberar tudo" rodando como root.
+
+1. **Criar o app:** no EasyPanel, crie um App, escolha o GitHub como fonte, aponte
+   para este repositório (branch `main`) e use o build **Dockerfile**.
+2. **Variáveis de ambiente:**
+   - `PIXEL_OFFICE_TOKEN`: senha longa e aleatória (`openssl rand -hex 32`). Sem ela o
+     servidor não sobe, porque fica exposto na rede.
+   - `PIXEL_OFFICE_ORIGINS` não é necessária: o navegador é aceito quando abre o
+     escritório pelo mesmo domínio.
+3. **Volumes (Mounts):**
+   - `/data`: banco SQLite, `secret.key` (a chave que cifra as credenciais) e o HOME do
+     Claude Code. Sem esse volume, tudo some a cada deploy. Faça backup dele.
+   - `/workspace`: o repositório do produto que os agentes vão editar.
+4. **Domínio:** porta `8000`. O proxy do EasyPanel já repassa o WebSocket.
+5. **Abrir:** `https://seu-dominio/?token=SEU_TOKEN`.
+6. **Clonar o produto:** pelo console do app, clone como o usuário `node`, para os
+   agentes conseguirem escrever:
+
+   ```bash
+   su node -s /bin/sh -c "git clone https://github.com/usuario/produto.git /workspace/produto"
+   ```
+
+   Repositório privado precisa de credencial do git (token de acesso ou deploy key).
+7. **Configurar no escritório:** em **Config → Execução**, informe `/workspace/produto`.
+   Em **Credenciais**, cadastre o token OAuth do Claude Code (`claude setup-token` no
+   seu computador).
+
+Para trocar a versão do Claude Code, use o build arg `CLAUDE_CODE_VERSION`.
+
 ## Próximos passos
 
 Há dois jeitos de ligar cada ferramenta, e eles se complementam:
