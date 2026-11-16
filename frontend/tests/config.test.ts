@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ConfigApi, isSlug, parseArgs, secretPayload, slugify } from "../src/config";
+import { ConfigApi, isSlug, parseArgs, secretPayload, slugify, toolReady, type CredentialConfig } from "../src/config";
 
 describe("slugify", () => {
   it("gera id a partir do nome", () => {
@@ -65,11 +65,34 @@ describe("ConfigApi", () => {
   it("salva chave sem esperar corpo de volta", async () => {
     const fetcher = vi.fn(async () => new Response(null, { status: 204 }));
     const api = new ConfigApi("http://h/", null, fetcher as typeof fetch);
-    await expect(api.setKey("groq", "gsk_1")).resolves.toBeUndefined();
-    expect(fetcher).toHaveBeenCalledWith("http://h/api/config/keys/groq", {
+    await expect(api.setKey("cursor", "key_1")).resolves.toBeUndefined();
+    expect(fetcher).toHaveBeenCalledWith("http://h/api/config/keys/cursor", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: '{"value":"gsk_1"}',
+      body: '{"value":"key_1"}',
     });
+  });
+});
+
+describe("toolReady", () => {
+  const credential = (id: CredentialConfig["id"], tool: CredentialConfig["tool"], configured: boolean): CredentialConfig => ({
+    id,
+    tool,
+    configured,
+    label: id,
+    env: "X",
+    hint: null,
+    updatedAt: null,
+  });
+
+  it("exige credencial para Claude Code e Cursor, e qualquer uma das duas do Claude basta", () => {
+    const none = [credential("claude_oauth", "claude_code", false), credential("anthropic", "claude_code", false)];
+    expect(toolReady("claude_code", none)).toBe(false);
+    expect(toolReady("claude_code", [...none, credential("anthropic", "claude_code", true)])).toBe(true);
+    expect(toolReady("cursor", none)).toBe(false);
+  });
+
+  it("Antigravity pode rodar com o login salvo", () => {
+    expect(toolReady("antigravity", [])).toBe(true);
   });
 });

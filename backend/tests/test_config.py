@@ -38,7 +38,7 @@ def test_defaults_without_seed(config):
     assert office["promptFiles"] == ["CLAUDE.md", "AGENTS.md"]
     assert office["logo"] is None
     assert config.agents() == []
-    assert all(not p["configured"] for p in config.providers())
+    assert all(not p["configured"] for p in config.credentials())
 
 
 def test_seed_creates_default_team_once(tmp_path):
@@ -103,12 +103,12 @@ def test_api_keys_are_encrypted_and_never_public(tmp_path):
     path = tmp_path / "office.db"
     config = Config(path)
     secret = "gsk_live_1234567890abcdef"
-    config.set_api_key("groq", KeyInput(value=f"  {secret}  "))
+    config.set_api_key("cursor", KeyInput(value=f"  {secret}  "))
 
-    groq = next(p for p in config.providers() if p["id"] == "groq")
-    assert groq["configured"] and groq["hint"] == "…cdef"
+    cursor = next(p for p in config.credentials() if p["id"] == "cursor")
+    assert cursor["configured"] and cursor["hint"] == "…cdef"
     assert secret not in json.dumps(config.public())
-    assert config.api_key("groq") == secret
+    assert config.api_key("cursor") == secret
     config.close()
 
     raw = sqlite3.connect(path).execute("SELECT value_enc FROM api_keys").fetchone()[0]
@@ -116,13 +116,13 @@ def test_api_keys_are_encrypted_and_never_public(tmp_path):
     assert (tmp_path / "secret.key").stat().st_mode & 0o777 == 0o600
 
     reopened = Config(path)
-    assert reopened.api_key("groq") == secret
-    reopened.delete_api_key("groq")
-    assert reopened.api_key("groq") is None
+    assert reopened.api_key("cursor") == secret
+    reopened.delete_api_key("cursor")
+    assert reopened.api_key("cursor") is None
     reopened.close()
 
 
-def test_unknown_provider(config):
+def test_unknown_credential(config):
     with pytest.raises(NotFound):
         config.set_api_key("outro", KeyInput(value="x"))
 
@@ -182,7 +182,7 @@ def test_agent_crud_and_mcp_links(config):
             {
                 "id": "dados",
                 "name": "Dados",
-                "provider": "groq",
+                "tool": "cursor",
                 "model": "m",
                 "mcps": ["github", "github"],
             }
@@ -196,9 +196,9 @@ def test_agent_crud_and_mcp_links(config):
 
     updated = config.update_agent(
         "dados",
-        AgentUpdate.model_validate({"provider": None, "prompt": "Analise dados", "enabled": False}),
+        AgentUpdate.model_validate({"tool": None, "prompt": "Analise dados", "enabled": False}),
     )
-    assert (updated["provider"], updated["prompt"], updated["enabled"]) == (
+    assert (updated["tool"], updated["prompt"], updated["enabled"]) == (
         None,
         "Analise dados",
         False,
@@ -226,7 +226,7 @@ def test_changes_notify_listeners(config):
     config.on_change(lambda: calls.append(1))
     config.set_office(OfficeSettings())
     config.set_logo(PNG)
-    config.set_api_key("openai", KeyInput(value="sk-123"))
+    config.set_api_key("anthropic", KeyInput(value="sk-123"))
     config.create_mcp(mcp())
     config.create_agent(AgentCreate(id="x", name="X"))
     assert len(calls) == 5
@@ -235,8 +235,61 @@ def test_changes_notify_listeners(config):
 def test_wrong_key_file_is_reported(tmp_path):
     path = tmp_path / "office.db"
     config = Config(path)
-    config.set_api_key("groq", KeyInput(value="segredo-123456"))
+    config.set_api_key("cursor", KeyInput(value="segredo-123456"))
     config.close()
     (tmp_path / "secret.key").unlink()
     with pytest.raises(BoardError, match="secret.key"):
-        Config(path).api_key("groq")
+        Config(path).api_key("cursor")
+
+
+def test_credentials_name_the_tool_and_variable(config):
+    credentials = {c["id"]: c for c in config.credentials()}
+    assert list(credentials) == ["claude_oauth", "anthropic", "cursor", "gemini"]
+    assert (credentials["claude_oauth"]["tool"], credentials["claude_oauth"]["env"]) == (
+        "claude_code",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+    )
+    assert credentials["cursor"]["env"] == "CURSOR_API_KEY"
+    assert credentials["gemini"]["tool"] == "antigravity"
+
+
+def test_agent_tool_is_validated():
+    assert AgentCreate.model_validate({"id": "a", "name": "A", "tool": "cursor"}).tool == "cursor"
+    with pytest.raises(ValidationError):
+        AgentCreate.model_validate({"id": "a", "name": "A", "tool": "groq"})
+
+
+def test_migrates_database_from_model_providers(tmp_path):
+    path = tmp_path / "office.db"
+    key = Config(path).close() or (tmp_path / "secret.key").read_bytes()
+    (tmp_path / "office.db").unlink()
+    old = sqlite3.connect(path)
+    old.executescript(
+        """
+        CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT '',
+          prompt TEXT NOT NULL DEFAULT '', provider TEXT, model TEXT NOT NULL DEFAULT '',
+          mcps TEXT NOT NULL DEFAULT '[]', enabled INTEGER NOT NULL, position INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL);
+        CREATE TABLE api_keys (provider TEXT PRIMARY KEY, value_enc TEXT NOT NULL,
+          hint TEXT NOT NULL, updated_at INTEGER NOT NULL);
+        INSERT INTO agents VALUES ('a', 'A', '', '', 'claude_oauth', '', '[]', 1, 0, 1);
+        INSERT INTO agents VALUES ('b', 'B', '', '', 'groq', 'llama', '[]', 1, 1, 1);
+        INSERT INTO agents VALUES ('c', 'C', '', '', 'google', '', '[]', 1, 2, 1);
+        INSERT INTO api_keys VALUES ('groq', 'x', '…', 1);
+        INSERT INTO api_keys VALUES ('google', 'y', '…', 1);
+        INSERT INTO api_keys VALUES ('claude_oauth', 'z', '…', 1);
+        """
+    )
+    old.commit()
+    old.close()
+
+    config = Config(path, key=key)
+    assert {a["id"]: a["tool"] for a in config.agents()} == {
+        "a": "claude_code",
+        "b": None,
+        "c": "antigravity",
+    }
+    configured = {c["id"] for c in config.credentials() if c["configured"]}
+    assert configured == {"claude_oauth", "gemini"}
+    config.close()
+    Config(path, key=key).close()

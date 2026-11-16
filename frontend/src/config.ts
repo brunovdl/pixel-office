@@ -2,7 +2,22 @@
 
 import { ApiClient } from "./board";
 
-export type ProviderId = "anthropic" | "claude_oauth" | "groq" | "openai" | "google";
+/** Ferramenta de desenvolvimento que executa o agente. */
+export type ToolId = "claude_code" | "cursor" | "antigravity";
+export type CredentialId = "claude_oauth" | "anthropic" | "cursor" | "gemini";
+
+export const TOOLS: Record<ToolId, string> = {
+  claude_code: "Claude Code",
+  cursor: "Cursor",
+  antigravity: "Antigravity",
+};
+
+/** Antigravity também entra pelo login salvo de uma sessão interativa. */
+export const TOOL_NEEDS_CREDENTIAL: Record<ToolId, boolean> = {
+  claude_code: true,
+  cursor: true,
+  antigravity: false,
+};
 export const PROMPT_FILES = ["CLAUDE.md", "AGENTS.md", "GEMINI.md"] as const;
 export type PromptFile = (typeof PROMPT_FILES)[number];
 export const LOGO_MAX_BYTES = 2 * 1024 * 1024;
@@ -15,9 +30,12 @@ export interface OfficeConfig {
   logo: { mime: string; updatedAt: number } | null;
 }
 
-export interface ProviderConfig {
-  id: ProviderId;
+export interface CredentialConfig {
+  id: CredentialId;
   label: string;
+  tool: ToolId;
+  /** Variável de ambiente em que a ferramenta lê a credencial. */
+  env: string;
   configured: boolean;
   hint: string | null;
   updatedAt: number | null;
@@ -46,7 +64,7 @@ export interface AgentConfig {
   name: string;
   role: string;
   prompt: string;
-  provider: ProviderId | null;
+  tool: ToolId | null;
   model: string;
   mcps: string[];
   enabled: boolean;
@@ -55,14 +73,20 @@ export interface AgentConfig {
 
 export interface PublicConfig {
   office: OfficeConfig;
-  providers: ProviderConfig[];
+  credentials: CredentialConfig[];
   mcps: McpConfig[];
   agents: AgentConfig[];
 }
 
+/** A ferramenta tem o que precisa para rodar no servidor? */
+export function toolReady(tool: ToolId, credentials: readonly CredentialConfig[]): boolean {
+  if (!TOOL_NEEDS_CREDENTIAL[tool]) return true;
+  return credentials.some((credential) => credential.tool === tool && credential.configured);
+}
+
 export const EMPTY_CONFIG: PublicConfig = {
   office: { name: "Pixel Office", masterPrompt: "", promptFiles: [], logo: null },
-  providers: [],
+  credentials: [],
   mcps: [],
   agents: [],
 };
@@ -142,12 +166,12 @@ export class ConfigApi extends ApiClient {
     await this.request("DELETE", "/api/config/logo");
   }
 
-  async setKey(provider: ProviderId, value: string): Promise<void> {
-    await this.request("PUT", `/api/config/keys/${provider}`, { value });
+  async setKey(credential: CredentialId, value: string): Promise<void> {
+    await this.request("PUT", `/api/config/keys/${credential}`, { value });
   }
 
-  async deleteKey(provider: ProviderId): Promise<void> {
-    await this.request("DELETE", `/api/config/keys/${provider}`);
+  async deleteKey(credential: CredentialId): Promise<void> {
+    await this.request("DELETE", `/api/config/keys/${credential}`);
   }
 
   createMcp(data: McpInput): Promise<McpConfig> {

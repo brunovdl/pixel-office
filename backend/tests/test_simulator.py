@@ -80,14 +80,13 @@ def test_seeds_an_empty_board_and_moves_tasks(monkeypatch):
     assert [s["status"] for s in specs] == ["implemented", "in_progress", "draft"]
     statuses = {task["status"] for task in hub.board.tasks()}
     assert "done" in statuses
-    seeded_pending = [
-        t for t in hub.board.tasks() if t["title"] == "Endpoint de relatório mensal"
-    ]
+    seeded_pending = [t for t in hub.board.tasks() if t["title"] == "Endpoint de relatório mensal"]
     assert seeded_pending and seeded_pending[0]["status"] != "pending"
 
 
 def test_does_not_seed_a_board_that_has_data(monkeypatch):
     monkeypatch.setattr(simulator_module, "FINISHED_LIMIT", 10_000)
+
     async def scenario():
         hub = team_hub()
         hub.board.create_task(TaskCreate(title="Minha tarefa", agent_id="be"))

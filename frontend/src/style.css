@@ -731,6 +731,8 @@ button:disabled { cursor: progress; opacity: 0.6; }
 
 .key-list { display: flex; flex-direction: column; gap: 8px; }
 .key-row { padding: 10px; border: 1px solid var(--line-soft); background: var(--panel-2); }
+.key-title { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.key-env { color: var(--muted); font-size: 11px; }
 .key-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .key-status { color: var(--muted); font-size: 11px; }
 .key-status.is-ok { color: var(--ok); }

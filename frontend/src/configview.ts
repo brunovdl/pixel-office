@@ -18,9 +18,12 @@ import {
   slugify,
   type AgentConfig,
   type ConfigApi,
+  type CredentialId,
   type McpConfig,
-  type ProviderId,
   type PublicConfig,
+  TOOLS,
+  toolReady,
+  type ToolId,
   type SecretRow,
 } from "./config";
 import { shirtColor } from "./look";
@@ -31,13 +34,13 @@ type Section = "office" | "keys" | "mcps" | "agents";
 
 const SECTIONS: readonly { id: Section; label: string; icon: string }[] = [
   { id: "office", label: "Escritório", icon: "▣" },
-  { id: "keys", label: "Chaves de API", icon: "⚿" },
+  { id: "keys", label: "Credenciais", icon: "⚿" },
   { id: "mcps", label: "MCPs", icon: "⛁" },
   { id: "agents", label: "Agentes", icon: "☺" },
 ];
 
 const NOT_WIRED =
-  "Os agentes ainda são simulados. Provedor, modelo, prompt e MCPs ficam salvos e passam a valer quando o adaptador do provedor for ligado.";
+  "Os agentes ainda são simulados. Ferramenta, modelo, prompt e MCPs ficam salvos e passam a valer quando a integração com a ferramenta for ligada.";
 
 function note(text: string): HTMLElement {
   return el("p", "cfg-note", text);
@@ -299,13 +302,13 @@ class OfficePane {
 class KeysPane {
   readonly el = el("section", "cfg-pane");
   private readonly list = el("div", "key-list");
-  private readonly rows = new Map<ProviderId, { status: HTMLElement; remove: HTMLButtonElement }>();
+  private readonly rows = new Map<CredentialId, { status: HTMLElement; remove: HTMLButtonElement }>();
 
   constructor(private readonly api: ConfigApi) {
     this.el.append(
-      el("h3", "cfg-title", "Chaves de API"),
+      el("h3", "cfg-title", "Credenciais das ferramentas"),
       note(
-        "As chaves ficam no servidor, criptografadas, e nunca voltam para o navegador: aqui aparecem só os últimos caracteres. Para trocar, digite a nova chave e salve.",
+        "Cada ferramenta lê sua credencial de uma variável de ambiente. Para o Claude Code basta uma das duas. O Antigravity também pode usar o login de uma sessão interativa. Tudo fica no servidor, criptografado, e nunca volta para o navegador: aqui aparecem só os últimos caracteres.",
       ),
       this.list,
       note(NOT_WIRED),
@@ -313,26 +316,32 @@ class KeysPane {
   }
 
   update(config: PublicConfig): void {
-    for (const provider of config.providers) {
-      let row = this.rows.get(provider.id);
-      if (!row) row = this.addRow(provider.id, provider.label);
-      row.status.textContent = provider.configured
-        ? `configurada ${provider.hint ?? ""}${provider.updatedAt ? ` · ${formatDateTime(provider.updatedAt)}` : ""}`
+    for (const credential of config.credentials) {
+      let row = this.rows.get(credential.id);
+      if (!row) row = this.addRow(credential.id, credential.label, credential.env);
+      row.status.textContent = credential.configured
+        ? `configurada ${credential.hint ?? ""}${credential.updatedAt ? ` · ${formatDateTime(credential.updatedAt)}` : ""}`
         : "não configurada";
-      row.status.classList.toggle("is-ok", provider.configured);
-      row.remove.hidden = !provider.configured;
+      row.status.classList.toggle("is-ok", credential.configured);
+      row.remove.hidden = !credential.configured;
     }
   }
 
-  private addRow(id: ProviderId, label: string): { status: HTMLElement; remove: HTMLButtonElement } {
+  private addRow(
+    id: CredentialId,
+    label: string,
+    env: string,
+  ): { status: HTMLElement; remove: HTMLButtonElement } {
     const form = el("form", "key-row");
     const head = el("div", "key-head");
     const status = el("span", "key-status");
-    head.append(el("strong", "", label), status);
+    const title = el("span", "key-title");
+    title.append(el("strong", "", label), el("code", "key-env", env));
+    head.append(title, status);
     const input = el("input", "input");
     input.type = "password";
     input.autocomplete = "off";
-    input.placeholder = "Cole a chave aqui";
+    input.placeholder = "Cole a credencial aqui";
     input.setAttribute("aria-label", `Chave de ${label}`);
     const save = el("button", "btn-primary", "Salvar");
     save.type = "submit";
@@ -617,7 +626,7 @@ class AgentsPane {
       this.list.replaceChildren(el("li", "empty", "Nenhum agente. O escritório fica vazio."));
       return;
     }
-    const providers = new Map(config.providers.map((p) => [p.id, p.label]));
+
     this.list.replaceChildren(
       ...config.agents.map((agent) => {
         const row = el("li", `row ${agent.enabled ? "status-in_progress" : ""}`);
@@ -627,9 +636,14 @@ class AgentsPane {
         dot.style.background = seq === undefined ? "var(--muted)" : shirtColor(seq);
         main.append(dot, el("span", "row-title", agent.name), el("span", "muted", agent.role));
         const tags = el("span", "row-tags");
-        if (agent.provider) {
+        if (agent.tool) {
+          const ready = toolReady(agent.tool, config.credentials);
           tags.append(
-            el("span", "tag", `${providers.get(agent.provider) ?? agent.provider}${agent.model ? ` · ${agent.model}` : ""}`),
+            el(
+              "span",
+              ready ? "tag" : "tag tag-criteria",
+              `${TOOLS[agent.tool]}${agent.model ? ` · ${agent.model}` : ""}${ready ? "" : " · sem credencial"}`,
+            ),
           );
         }
         if (agent.mcps.length) {
@@ -667,17 +681,17 @@ class AgentsPane {
       if (!idTouched) id.value = slugify(name.value);
     });
     const role = textInput(agent?.role ?? "", 120, "Modelagem e consultas");
-    const provider = select(
+    const tool = select(
       [
-        { value: "", label: "Não definido" },
-        ...config.providers.map((p) => ({
-          value: p.id,
-          label: p.configured ? p.label : `${p.label} (sem chave)`,
+        { value: "", label: "Não definida" },
+        ...(Object.keys(TOOLS) as ToolId[]).map((id) => ({
+          value: id,
+          label: toolReady(id, config.credentials) ? TOOLS[id] : `${TOOLS[id]} (sem credencial)`,
         })),
       ],
-      agent?.provider ?? "",
+      agent?.tool ?? "",
     );
-    const model = textInput(agent?.model ?? "", 120, "nome do modelo");
+    const model = textInput(agent?.model ?? "", 120, "padrão da ferramenta");
     const prompt = textArea(agent?.prompt ?? "", 10, "Você é responsável por…");
     const [enabledLabel, enabled] = checkbox("Ativo (aparece no escritório)", agent?.enabled ?? true);
 
@@ -697,7 +711,7 @@ class AgentsPane {
       field("Nome", name),
       field("Id (não muda depois)", id),
       field("Papel", role),
-      field("Provedor", provider),
+      field("Ferramenta", tool),
       field("Modelo", model),
     );
     const save = el("button", "btn-primary", agent ? "Salvar" : "Criar agente");
@@ -733,7 +747,7 @@ class AgentsPane {
         name: name.value.trim(),
         role: role.value.trim(),
         prompt: prompt.value,
-        provider: (provider.value || null) as ProviderId | null,
+        tool: (tool.value || null) as ToolId | null,
         model: model.value.trim(),
         mcps: mcpInputs.filter(([, input]) => input.checked).map(([mcpId]) => mcpId),
         enabled: enabled.checked,

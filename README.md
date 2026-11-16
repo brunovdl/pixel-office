@@ -7,17 +7,18 @@ repositório, mostrado como um escritório em pixel.
 
 ## Estado atual
 
-O escritório recebe eventos do backend por WebSocket. Nenhum provedor de IA está
-ligado ainda: quem gera os eventos é um time simulado.
+O escritório recebe eventos do backend por WebSocket. Nenhuma ferramenta de
+desenvolvimento está ligada ainda: quem gera os eventos é um time simulado.
 
 | Parte | Situação |
 | --- | --- |
 | Escritório em pixel (`frontend/`) | Funciona, ligado ao backend, com janelas flutuantes |
 | Backend em Python (`backend/`) | Funciona: estado, WebSocket, entrada de eventos por HTTP, tarefas, specs e configuração em SQLite |
-| Configurações | Funciona: nome, logo, prompt mestre, chaves de API, MCPs e agentes |
+| Configurações | Funciona: nome, logo, prompt mestre, credenciais, MCPs e agentes |
 | Protocolo de eventos | `backend/pixel_office/events.py` e `frontend/src/events.ts` |
-| Adaptador Groq | Não começou |
-| Adaptador Claude Code | Não começou |
+| Integração com Claude Code | Não começou |
+| Integração com Cursor | Não começou |
+| Integração com Antigravity | Não começou |
 
 ## Como rodar
 
@@ -77,8 +78,9 @@ cd frontend && npm test && npm run typecheck
 
 ## Como funciona
 
-O escritório não conhece nenhum provedor. Tudo passa por um formato único de
-eventos, e cada provedor será um adaptador que publica nesse formato.
+O escritório não conhece nenhuma ferramenta. Tudo passa por um formato único de
+eventos, e cada ferramenta (Claude Code, Cursor, Antigravity) terá uma integração
+que traduz a saída dela para esse formato.
 
 ```
 adaptador (simulador hoje) -> Hub -> WebSocket -> reduce(estado, evento) -> cena + painel
@@ -125,7 +127,7 @@ curl -X POST localhost:8000/api/events -H 'content-type: application/json' \
 | `GET /api/config` | Configuração sem os segredos (chaves e valores de MCP aparecem só como `…abcd`) |
 | `PUT /api/config/office` | Nome, prompt mestre e arquivos em que ele é publicado |
 | `GET/PUT/DELETE /api/config/logo` | Logo; o envio é o arquivo puro no corpo (PNG, JPEG, WEBP ou GIF, até 2 MB) |
-| `PUT/DELETE /api/config/keys/{provedor}` | Chave de API: `anthropic`, `claude_oauth`, `groq`, `openai`, `google` |
+| `PUT/DELETE /api/config/keys/{credencial}` | Credencial de ferramenta: `claude_oauth`, `anthropic`, `cursor`, `gemini` |
 | `POST /api/config/mcps`, `PATCH/DELETE /api/config/mcps/{id}` | Servidores MCP; nos segredos, `null` mantém o valor salvo |
 | `POST /api/config/agents`, `PATCH/DELETE /api/config/agents/{id}` | Agentes do time |
 | `WS /ws` | Estado ao conectar e eventos em seguida |
@@ -232,28 +234,34 @@ O botão **⚙ Config** abre o painel de configuração do escritório:
 | Seção | O que configura |
 | --- | --- |
 | Escritório | Nome (topo e título da aba), logo (topo e quadro na parede do escritório, com envio por botão ou arrastando a imagem) e prompt mestre, com a escolha de publicar como CLAUDE.md, AGENTS.md e GEMINI.md |
-| Chaves de API | Uma chave por provedor: Anthropic, Claude Code (token OAuth), Groq, OpenAI e Google Gemini |
+| Credenciais | O que cada ferramenta lê: Claude Code (`CLAUDE_CODE_OAUTH_TOKEN` ou `ANTHROPIC_API_KEY`), Cursor (`CURSOR_API_KEY`) e Antigravity (`GEMINI_API_KEY`, ou o login de uma sessão interativa) |
 | MCPs | Servidores por comando local (stdio, com argumentos e variáveis de ambiente) ou remoto (http, com cabeçalhos) |
-| Agentes | Nome, id, papel, provedor, modelo, prompt próprio, MCPs que pode usar e se está ativo |
+| Agentes | Nome, id, papel, ferramenta (Claude Code, Cursor ou Antigravity), modelo, prompt próprio, MCPs que pode usar e se está ativo |
 
 O time do escritório vem da lista de agentes: na primeira execução ela é preenchida
 com os seis agentes padrão; agente ativo entra na sala, desativado ou excluído sai,
 e renomear muda o nome na hora.
 
-Chaves de API e valores de variáveis e cabeçalhos dos MCPs são segredos: ficam
+Credenciais e valores de variáveis e cabeçalhos dos MCPs são segredos: ficam
 criptografados no banco com a chave de `backend/data/secret.key` (criada na primeira
 execução, legível só pelo dono do arquivo) e nunca voltam pela API nem pelo WebSocket;
 a tela mostra só os quatro últimos caracteres. Quem tiver o banco **e** o
 `secret.key` consegue abrir os segredos, então guarde os dois com o mesmo cuidado. Se
 o `secret.key` for perdido, os segredos salvos precisam ser cadastrados de novo.
 
-Provedor, modelo, prompts e MCPs ficam salvos, mas ainda não têm efeito: os agentes
-são simulados até o adaptador do provedor ser ligado. O prompt mestre também só vira
+Ferramenta, modelo, prompts e MCPs ficam salvos, mas ainda não têm efeito: os
+agentes são simulados até a integração com a ferramenta ser ligada. O prompt mestre também só vira
 arquivo quando o harness estiver ligado a um repositório.
 
 ## Próximos passos
 
-1. Adaptador Groq: loop de agente com ferramentas, publicando no hub e usando a
-   chave, o modelo, o prompt e os MCPs de cada agente.
-2. Adaptador Claude Code: executa o `claude` e traduz a saída para estes eventos.
+Há dois jeitos de ligar cada ferramenta, e eles se complementam:
+
+| Jeito | Como funciona | Ferramentas |
+| --- | --- | --- |
+| No servidor | O backend roda a ferramenta sem interface, com a credencial, o modelo, o prompt e os MCPs do agente, e traduz a saída em eventos | `claude -p --output-format stream-json`, `cursor-agent -p --output-format stream-json`, `agy -p` |
+| Ponte do computador | A ferramenta roda no computador do usuário e os hooks dela mandam cada passo para `POST /api/events` (ou para um endpoint que traduz o formato dela) | Hooks HTTP do Claude Code, hooks do Antigravity |
+
+1. Integração com o Claude Code.
+2. Integração com Cursor e Antigravity, reaproveitando o mesmo formato.
 3. Entrada de tarefas pela tela, para dizer aos agentes o que fazer.

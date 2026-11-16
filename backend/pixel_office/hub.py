@@ -73,9 +73,7 @@ class Hub:
 
     def emit(self, type: str, agent_id: str, **fields: Any) -> AgentEvent:
         """Monta, valida e publica um evento com o horário atual."""
-        event = parse_event(
-            {"type": type, "agent_id": agent_id, **fields}, now_ms=self._clock()
-        )
+        event = parse_event({"type": type, "agent_id": agent_id, **fields}, now_ms=self._clock())
         self.publish(event)
         return event
 

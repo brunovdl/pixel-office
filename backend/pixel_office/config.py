@@ -1,8 +1,9 @@
-"""Configuração do escritório: identidade, logo, chaves de API, MCPs e agentes.
+"""Configuração do escritório: identidade, logo, credenciais, MCPs e agentes.
 
-Chaves de API e valores de variáveis e cabeçalhos dos MCPs são segredos: ficam
-criptografados no banco e nunca saem pela API pública, que mostra só os quatro
-últimos caracteres.
+Cada agente roda numa ferramenta de desenvolvimento (Claude Code, Cursor,
+Antigravity). As credenciais das ferramentas e os valores de variáveis e
+cabeçalhos dos MCPs são segredos: ficam criptografados no banco e nunca saem
+pela API pública, que mostra só os quatro últimos caracteres.
 """
 
 import json
@@ -26,17 +27,24 @@ from pydantic.alias_generators import to_camel
 
 from .board import BoardError, NotFound
 
-PROVIDERS: dict[str, str] = {
-    "anthropic": "Anthropic (API)",
-    "claude_oauth": "Claude Code (token OAuth)",
-    "groq": "Groq",
-    "openai": "OpenAI",
-    "google": "Google Gemini",
+# Ferramentas de desenvolvimento que executam os agentes.
+TOOLS: dict[str, str] = {
+    "claude_code": "Claude Code",
+    "cursor": "Cursor",
+    "antigravity": "Antigravity",
+}
+
+# Credenciais que as ferramentas leem: (rótulo, ferramenta, variável de ambiente).
+CREDENTIALS: dict[str, tuple[str, str, str]] = {
+    "claude_oauth": ("Claude Code · token OAuth", "claude_code", "CLAUDE_CODE_OAUTH_TOKEN"),
+    "anthropic": ("Claude Code · chave da API Anthropic", "claude_code", "ANTHROPIC_API_KEY"),
+    "cursor": ("Cursor · chave da API", "cursor", "CURSOR_API_KEY"),
+    "gemini": ("Antigravity · chave da API Gemini", "antigravity", "GEMINI_API_KEY"),
 }
 PROMPT_FILES = ("CLAUDE.md", "AGENTS.md", "GEMINI.md")
 LOGO_MAX_BYTES = 2 * 1024 * 1024
 
-Provider = Literal["anthropic", "claude_oauth", "groq", "openai", "google"]
+Tool = Literal["claude_code", "cursor", "antigravity"]
 PromptFile = Literal["CLAUDE.md", "AGENTS.md", "GEMINI.md"]
 Slug = Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9_-]{0,31}$")]
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
@@ -135,7 +143,7 @@ CREATE TABLE IF NOT EXISTS agents (
   name TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT '',
   prompt TEXT NOT NULL DEFAULT '',
-  provider TEXT,
+  tool TEXT,
   model TEXT NOT NULL DEFAULT '',
   mcps TEXT NOT NULL DEFAULT '[]',
   enabled INTEGER NOT NULL,
@@ -245,7 +253,7 @@ class AgentCreate(_Input):
     name: Name
     role: Role = ""
     prompt: Prompt = ""
-    provider: Provider | None = None
+    tool: Tool | None = None
     model: Annotated[str, StringConstraints(strip_whitespace=True, max_length=120)] = ""
     mcps: Annotated[list[Slug], Field(max_length=50)] = Field(default_factory=list)
     enabled: bool = True
@@ -257,14 +265,14 @@ class AgentUpdate(_Input):
     name: Name | None = None
     role: Role | None = None
     prompt: Prompt | None = None
-    provider: Provider | None = None
+    tool: Tool | None = None
     model: Annotated[str, StringConstraints(strip_whitespace=True, max_length=120)] | None = None
     mcps: Annotated[list[Slug], Field(max_length=50)] | None = None
     enabled: bool | None = None
 
     @model_validator(mode="after")
     def _not_null(self) -> Self:
-        for name in self.model_fields_set - {"provider"}:
+        for name in self.model_fields_set - {"tool"}:
             if getattr(self, name) is None:
                 raise ValueError(f"{name} não pode ser null")
         return self
@@ -283,6 +291,7 @@ class Config:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(str(path), check_same_thread=False)
         self._db.row_factory = sqlite3.Row
+        self._migrate()
         self._db.executescript(SCHEMA)
         self._fernet = Fernet(key or load_key(path))
         self._clock = clock
@@ -301,7 +310,7 @@ class Config:
         """Tudo que a tela pode ver. Segredos aparecem só como dica."""
         return {
             "office": self.office(),
-            "providers": self.providers(),
+            "credentials": self.credentials(),
             "mcps": self.mcps(),
             "agents": self.agents(),
         }
@@ -348,20 +357,22 @@ class Config:
 
     # -------------------------------------------------------- chaves de API
 
-    def providers(self) -> list[dict[str, Any]]:
+    def credentials(self) -> list[dict[str, Any]]:
         rows = {
             row["provider"]: row
             for row in self._db.execute("SELECT provider, hint, updated_at FROM api_keys")
         }
         return [
             {
-                "id": provider,
+                "id": credential,
                 "label": label,
-                "configured": provider in rows,
-                "hint": rows[provider]["hint"] if provider in rows else None,
-                "updatedAt": rows[provider]["updated_at"] if provider in rows else None,
+                "tool": tool,
+                "env": env,
+                "configured": credential in rows,
+                "hint": rows[credential]["hint"] if credential in rows else None,
+                "updatedAt": rows[credential]["updated_at"] if credential in rows else None,
             }
-            for provider, label in PROVIDERS.items()
+            for credential, (label, tool, env) in CREDENTIALS.items()
         ]
 
     def set_api_key(self, provider: str, data: KeyInput) -> None:
@@ -381,7 +392,7 @@ class Config:
         self._changed()
 
     def api_key(self, provider: str) -> str | None:
-        """Valor real da chave, para os adaptadores. Nunca vai para a tela."""
+        """Valor real da credencial, para quem iniciar a ferramenta. Nunca vai para a tela."""
         row = self._db.execute(
             "SELECT value_enc FROM api_keys WHERE provider = ?", (provider,)
         ).fetchone()
@@ -491,14 +502,14 @@ class Config:
         self._check_mcps(data.mcps)
         with self._db:
             self._db.execute(
-                "INSERT INTO agents (id, name, role, prompt, provider, model, mcps, enabled, "
+                "INSERT INTO agents (id, name, role, prompt, tool, model, mcps, enabled, "
                 "position, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     data.id,
                     data.name,
                     data.role,
                     data.prompt,
-                    data.provider,
+                    data.tool,
                     data.model,
                     json.dumps(list(dict.fromkeys(data.mcps))),
                     int(data.enabled),
@@ -529,11 +540,35 @@ class Config:
 
     # -------------------------------------------------------------- interno
 
+    def _migrate(self) -> None:
+        """Atualiza bancos da versão com provedores de modelo (Groq, OpenAI…)."""
+        columns = {row["name"] for row in self._db.execute("PRAGMA table_info(agents)")}
+        if "provider" not in columns:
+            return
+        tool_of = {
+            "anthropic": "claude_code",
+            "claude_oauth": "claude_code",
+            "google": "antigravity",
+        }
+        with self._db:
+            self._db.execute("ALTER TABLE agents RENAME COLUMN provider TO tool")
+            for row in self._db.execute("SELECT id, tool FROM agents").fetchall():
+                self._db.execute(
+                    "UPDATE agents SET tool = ? WHERE id = ?", (tool_of.get(row["tool"]), row["id"])
+                )
+            self._db.execute(
+                "UPDATE OR IGNORE api_keys SET provider = 'gemini' WHERE provider = 'google'"
+            )
+            placeholders = ", ".join("?" for _ in CREDENTIALS)
+            self._db.execute(
+                f"DELETE FROM api_keys WHERE provider NOT IN ({placeholders})", list(CREDENTIALS)
+            )
+
     def _seed(self) -> None:
         with self._db:
             for position, (agent_id, name, role, prompt) in enumerate(DEFAULT_AGENTS):
                 self._db.execute(
-                    "INSERT OR IGNORE INTO agents (id, name, role, prompt, provider, model, mcps, "
+                    "INSERT OR IGNORE INTO agents (id, name, role, prompt, tool, model, mcps, "
                     "enabled, position, updated_at) VALUES (?, ?, ?, ?, NULL, '', '[]', 1, ?, ?)",
                     (agent_id, name, role, prompt, position, self._clock()),
                 )
@@ -553,8 +588,8 @@ class Config:
             )
 
     def _check_provider(self, provider: str) -> None:
-        if provider not in PROVIDERS:
-            raise NotFound(f"Provedor {provider} não existe")
+        if provider not in CREDENTIALS:
+            raise NotFound(f"Credencial {provider} não existe")
 
     def _check_mcps(self, ids: list[str]) -> None:
         known = {row["id"] for row in self._db.execute("SELECT id FROM mcps")}
@@ -629,7 +664,7 @@ def _agent_public(row: sqlite3.Row) -> dict[str, Any]:
         "name": row["name"],
         "role": row["role"],
         "prompt": row["prompt"],
-        "provider": row["provider"],
+        "tool": row["tool"],
         "model": row["model"],
         "mcps": json.loads(row["mcps"]),
         "enabled": bool(row["enabled"]),

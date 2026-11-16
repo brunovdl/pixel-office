@@ -243,14 +243,14 @@ def create_app(
         config.delete_logo()
         return Response(status_code=204)
 
-    @app.put("/api/config/keys/{provider}", status_code=204, dependencies=auth)
-    async def put_key(provider: str, data: KeyInput) -> Response:
-        config.set_api_key(provider, data)
+    @app.put("/api/config/keys/{credential}", status_code=204, dependencies=auth)
+    async def put_key(credential: str, data: KeyInput) -> Response:
+        config.set_api_key(credential, data)
         return Response(status_code=204)
 
-    @app.delete("/api/config/keys/{provider}", status_code=204, dependencies=auth)
-    async def delete_key(provider: str) -> Response:
-        config.delete_api_key(provider)
+    @app.delete("/api/config/keys/{credential}", status_code=204, dependencies=auth)
+    async def delete_key(credential: str) -> Response:
+        config.delete_api_key(credential)
         return Response(status_code=204)
 
     @app.post("/api/config/mcps", status_code=status.HTTP_201_CREATED, dependencies=auth)

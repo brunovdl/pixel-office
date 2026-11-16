@@ -230,13 +230,15 @@ PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
 class TestConfigApi:
     def test_secrets_go_in_and_never_come_out(self, client):
         secret = "gsk_live_abcdefghijkl"
-        assert client.put("/api/config/keys/groq", json={"value": secret}).status_code == 204
+        assert client.put("/api/config/keys/cursor", json={"value": secret}).status_code == 204
         body = client.get("/api/config").text
         assert secret not in body
-        groq = next(p for p in client.get("/api/config").json()["providers"] if p["id"] == "groq")
-        assert groq["hint"] == "…ijkl"
+        cursor = next(
+            p for p in client.get("/api/config").json()["credentials"] if p["id"] == "cursor"
+        )
+        assert cursor["hint"] == "…ijkl"
         assert client.put("/api/config/keys/outro", json={"value": "x"}).status_code == 404
-        assert client.delete("/api/config/keys/groq").status_code == 204
+        assert client.delete("/api/config/keys/cursor").status_code == 204
 
     def test_logo_upload_and_download(self, client):
         response = client.put(
@@ -299,7 +301,7 @@ class TestConfigApi:
     def test_websocket_gets_config_in_snapshot_and_on_change(self, client):
         with client.websocket_connect("/ws") as ws:
             assert ws.receive_json()["config"]["office"]["name"] == "Pixel Office"
-            client.put("/api/config/keys/openai", json={"value": "sk-secreta-123456"})
+            client.put("/api/config/keys/anthropic", json={"value": "sk-secreta-123456"})
             message = ws.receive_json()
             assert message["kind"] == "config"
             assert "sk-secreta" not in str(message)
@@ -309,7 +311,7 @@ def test_config_routes_require_token():
     with TestClient(create_app(Hub(), token="segredo")) as client:
         client.put("/api/config/logo", content=PNG, headers={"Authorization": "Bearer segredo"})
         assert client.get("/api/config").status_code == 401
-        assert client.put("/api/config/keys/groq", json={"value": "x"}).status_code == 401
+        assert client.put("/api/config/keys/cursor", json={"value": "x"}).status_code == 401
         assert client.get("/api/config/logo").status_code == 401
         assert client.get("/api/config/logo?token=errado").status_code == 401
         assert client.get("/api/config/logo?token=segredo").content == PNG
