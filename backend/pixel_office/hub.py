@@ -6,6 +6,7 @@ Tudo deve ser chamado na thread do loop de eventos do asyncio.
 
 import asyncio
 import time
+from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -17,6 +18,9 @@ from .state import OfficeState
 # Eventos que um cliente lento pode acumular antes de ser desconectado.
 QUEUE_LIMIT = 1000
 
+# Eventos recentes enviados a quem conecta, para montar o histórico da tela.
+HISTORY_LIMIT = 500
+
 
 def now_ms() -> int:
     return int(time.time() * 1000)
@@ -25,6 +29,8 @@ def now_ms() -> int:
 @dataclass(eq=False)
 class Subscription:
     """Estado no momento da assinatura e a fila dos eventos seguintes.
+
+    O snapshot traz também `recent`, os últimos eventos em ordem de chegada.
 
     Um `None` na fila avisa que o assinante ficou para trás e foi removido.
     """
@@ -39,6 +45,7 @@ class Hub:
         self._clock = clock
         self._subscriptions: set[Subscription] = set()
         self._decisions: dict[str, asyncio.Future[str | None]] = {}
+        self._history: deque[dict[str, Any]] = deque(maxlen=HISTORY_LIMIT)
 
     @property
     def subscriber_count(self) -> int:
@@ -48,6 +55,7 @@ class Hub:
         """Aplica o evento ao estado e entrega a todos os assinantes."""
         self.state.apply(event)
         wire = to_wire(event)
+        self._history.append(wire)
         for subscription in list(self._subscriptions):
             try:
                 subscription.queue.put_nowait(wire)
@@ -73,7 +81,7 @@ class Hub:
         # Snapshot e inscrição acontecem sem `await` entre eles, então nenhum
         # evento se perde nem chega duplicado.
         subscription = Subscription(
-            snapshot=self.state.snapshot(),
+            snapshot={**self.state.snapshot(), "recent": list(self._history)},
             queue=asyncio.Queue(maxsize=QUEUE_LIMIT),
         )
         self._subscriptions.add(subscription)

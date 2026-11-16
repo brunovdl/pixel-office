@@ -12,7 +12,7 @@ ligado ainda: quem gera os eventos é um time simulado.
 
 | Parte | Situação |
 | --- | --- |
-| Escritório em pixel (`frontend/`) | Funciona, ligado ao backend |
+| Escritório em pixel (`frontend/`) | Funciona, ligado ao backend, com janelas flutuantes |
 | Backend em Python (`backend/`) | Funciona: estado, WebSocket, entrada de eventos por HTTP |
 | Protocolo de eventos | `backend/pixel_office/events.py` e `frontend/src/events.ts` |
 | Adaptador Groq | Não começou |
@@ -119,7 +119,7 @@ Mensagens do WebSocket:
 
 | Sentido | Mensagem |
 | --- | --- |
-| servidor -> tela | `{"kind":"snapshot","agents":[...],"nextSeq":n}` ao conectar |
+| servidor -> tela | `{"kind":"snapshot","agents":[...],"nextSeq":n,"recent":[...]}` ao conectar (`recent` traz os últimos 500 eventos) |
 | servidor -> tela | `{"kind":"event","event":{...}}` a cada evento |
 | servidor -> tela | `{"kind":"error","message":"..."}` quando recusa um comando |
 | tela -> servidor | `{"kind":"answer_decision","agentId":"be","answer":"Pode"}` |
@@ -134,11 +134,14 @@ dois lados e nesse arquivo.
 | --- | --- |
 | `events.ts` | Tipos dos eventos e a interface `EventFeed` |
 | `wsfeed.ts` | Conexão com o backend, com reconexão automática |
+| `windows.ts`, `geometry.ts` | Janelas flutuantes: mover, redimensionar, minimizar, maximizar |
+| `views.ts` | Conteúdo das janelas (Conversas, Decisões, Agentes) e dos painéis |
+| `history.ts`, `timeline.ts` | Eventos recentes e o histórico de cada agente |
+| `ui.ts` | Textos de status, formulário de resposta e utilitários de tela |
 | `state.ts` | Máquina de estados dos agentes (`reduce`) |
 | `grid.ts` | Planta do escritório e busca de caminho |
 | `scene.ts` | Desenho do escritório e movimento dos agentes |
 | `sprites.ts`, `look.ts` | Personagens desenhados por código, sem imagens |
-| `panel.ts` | Lista do time, resposta de decisões e registro de eventos |
 | `simulator.ts` | Simulador local do modo `?sim` |
 
 ### Eventos
@@ -168,10 +171,31 @@ Os nomes de ferramenta seguem os do Claude Code (`Read`, `Grep`, `Glob`, `Edit`,
 - O monitor da mesa muda conforme o status (leitura, edição, terminal).
 - Balões: `...` pensando, `?` aguardando decisão, `!` erro, `✓` concluiu.
 - O quadro "DECISÕES" na parede ganha uma nota por decisão pendente.
-- No painel, o agente que aguarda decisão ganha um campo de resposta. No time
-  simulado, a decisão sem resposta se resolve sozinha em 60 segundos.
+- Painel da esquerda (recolhível pelo `◀`): status da equipe e log de eventos.
+- Barra de baixo: um botão por agente, que abre a conversa dele. Clicar no agente
+  dentro do escritório faz o mesmo.
 
 Há oito mesas. Um nono agente fica sem mesa e trabalha em pé.
+
+### Janelas
+
+Os botões no topo abrem as janelas:
+
+| Janela | Conteúdo |
+| --- | --- |
+| Conversas | Histórico de cada agente: tarefas, ferramentas, mensagens, perguntas e respostas. Quando o agente pede decisão, a resposta vai pelo rodapé |
+| Decisões | Decisões pendentes com campo de resposta e as respondidas recentemente. O botão mostra quantas estão pendentes. No time simulado, a decisão sem resposta se resolve sozinha em 60 segundos |
+| Agentes | Papel, status, tarefa atual e última atividade de cada agente |
+
+Toda janela pode ser:
+
+- movida arrastando a barra de título;
+- redimensionada puxando qualquer borda ou canto;
+- minimizada (`_`), maximizada ou restaurada (`□`/`❐`, ou duplo clique na barra) e fechada (`✕` ou `Esc`).
+
+O botão no topo abre a janela, traz para a frente ou minimiza se ela já estiver em
+foco. Posição, tamanho e quais janelas estavam abertas ficam salvos no navegador.
+Em telas com menos de 720 px de largura, as janelas ocupam a área inteira.
 
 ## Próximos passos
 

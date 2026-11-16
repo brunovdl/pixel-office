@@ -57,6 +57,7 @@ def test_websocket_sends_snapshot_then_live_events(client):
         assert snapshot["kind"] == "snapshot"
         assert [agent["id"] for agent in snapshot["agents"]] == ["a"]
         assert snapshot["nextSeq"] == 1
+        assert [event["type"] for event in snapshot["recent"]] == ["agent_joined"]
 
         post(client, {"type": "task_started", "agentId": "a", "task": "x", "ts": 9})
         assert ws.receive_json() == {

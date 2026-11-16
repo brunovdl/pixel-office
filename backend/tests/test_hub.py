@@ -50,6 +50,21 @@ def test_subscriber_gets_snapshot_then_only_later_events():
     asyncio.run(scenario())
 
 
+def test_snapshot_carries_recent_events_up_to_the_limit(monkeypatch):
+    async def scenario():
+        monkeypatch.setattr(hub_module, "HISTORY_LIMIT", 3)
+        hub = make_hub()
+        join(hub)
+        for _ in range(3):
+            hub.emit("thinking", "a")
+        with hub.subscribe() as subscription:
+            recent = subscription.snapshot["recent"]
+        assert [event["type"] for event in recent] == ["thinking"] * 3
+        assert [event["ts"] for event in recent] == [1001, 1002, 1003]
+
+    asyncio.run(scenario())
+
+
 def test_slow_subscriber_is_dropped_and_told(monkeypatch):
     async def scenario():
         monkeypatch.setattr(hub_module, "QUEUE_LIMIT", 3)

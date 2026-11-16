@@ -16,8 +16,8 @@ export interface SocketLike {
 
 export interface WebSocketFeedOptions {
   url: string;
-  /** Chamado a cada conexão, com o estado completo naquele momento. */
-  onSnapshot: (state: OfficeState) => void;
+  /** Chamado a cada conexão, com o estado completo e os eventos recentes. */
+  onSnapshot: (state: OfficeState, recent: AgentEvent[]) => void;
   onStatus?: (status: ConnectionStatus) => void;
   /** Recusas do backend, como responder a quem não aguarda decisão. */
   onServerError?: (message: string) => void;
@@ -25,7 +25,7 @@ export interface WebSocketFeedOptions {
 }
 
 type ServerMessage =
-  | { kind: "snapshot"; agents: AgentState[]; nextSeq: number }
+  | { kind: "snapshot"; agents: AgentState[]; nextSeq: number; recent?: AgentEvent[] }
   | { kind: "event"; event: AgentEvent }
   | { kind: "error"; message: string };
 
@@ -93,7 +93,8 @@ export class WebSocketFeed implements EventFeed {
       return;
     }
     if (message.kind === "snapshot" && Array.isArray(message.agents)) {
-      this.options.onSnapshot(stateFromSnapshot(message.agents, message.nextSeq));
+      const recent = Array.isArray(message.recent) ? message.recent : [];
+      this.options.onSnapshot(stateFromSnapshot(message.agents, message.nextSeq), recent);
     } else if (message.kind === "event" && message.event) {
       for (const listener of this.listeners) listener(message.event);
     } else if (message.kind === "error") {

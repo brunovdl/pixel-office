@@ -27,12 +27,12 @@ class FakeSocket implements SocketLike {
 function setup() {
   const sockets: FakeSocket[] = [];
   const statuses: ConnectionStatus[] = [];
-  const snapshots: OfficeState[] = [];
+  const snapshots: [OfficeState, AgentEvent[]][] = [];
   const events: AgentEvent[] = [];
   const errors: string[] = [];
   const feed = new WebSocketFeed({
     url: "ws://teste/ws",
-    onSnapshot: (state) => snapshots.push(state),
+    onSnapshot: (state, recent) => snapshots.push([state, recent]),
     onStatus: (status) => statuses.push(status),
     onServerError: (message) => errors.push(message),
     createSocket: (url) => {
@@ -73,8 +73,13 @@ describe("WebSocketFeed", () => {
   it("entrega o snapshot como estado e os eventos aos ouvintes", () => {
     const { feed, sockets, snapshots, events } = setup();
     feed.start();
-    sockets[0]!.receive({ kind: "snapshot", agents: [AGENT], nextSeq: 1 });
-    expect(snapshots).toEqual([{ agents: { a: AGENT }, order: ["a"], nextSeq: 1 }]);
+    const joined = { type: "agent_joined", agentId: "a", name: "A", role: "dev", ts: 1 };
+    sockets[0]!.receive({ kind: "snapshot", agents: [AGENT], nextSeq: 1, recent: [joined] });
+    sockets[0]!.receive({ kind: "snapshot", agents: [], nextSeq: 0 });
+    expect(snapshots).toEqual([
+      [{ agents: { a: AGENT }, order: ["a"], nextSeq: 1 }, [joined]],
+      [{ agents: {}, order: [], nextSeq: 0 }, []],
+    ]);
 
     const event = { type: "thinking", agentId: "a", ts: 4 };
     sockets[0]!.receive({ kind: "event", event });

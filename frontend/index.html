@@ -8,37 +8,37 @@
   </head>
   <body>
     <header class="topbar">
-      <div class="brand">
-        <h1>Pixel Office</h1>
-        <span class="badge" id="feed-badge" role="status">conectando…</span>
-      </div>
-      <div class="controls" id="sim-controls" hidden>
+      <button id="btn-side" class="icon-btn" type="button" aria-controls="side">◀</button>
+      <span class="live" id="feed-badge" role="status">conectando…</span>
+      <div class="sim-controls" id="sim-controls" hidden>
         <button id="btn-pause" type="button">Pausar</button>
-        <label>
-          Velocidade
-          <select id="sel-speed">
-            <option value="1">1x</option>
-            <option value="2">2x</option>
-            <option value="4">4x</option>
-          </select>
-        </label>
+        <select id="sel-speed" aria-label="Velocidade da simulação">
+          <option value="1">1x</option>
+          <option value="2">2x</option>
+          <option value="4">4x</option>
+        </select>
       </div>
+      <nav class="dock" id="dock" aria-label="Janelas"></nav>
     </header>
     <main class="layout">
-      <section class="stage" id="stage">
-        <canvas id="office" aria-label="Escritório em pixel com os agentes"></canvas>
-      </section>
-      <aside class="side">
-        <section>
+      <aside class="side" id="side" aria-label="Equipe e eventos">
+        <section class="side-team">
           <h2>Equipe</h2>
-          <ul class="agents" id="agents"></ul>
+          <ul class="team" id="team"></ul>
         </section>
-        <section class="log-section">
-          <h2>Eventos</h2>
+        <section class="side-log">
+          <h2>Log de eventos</h2>
           <ol class="log" id="log"></ol>
         </section>
       </aside>
+      <div class="work">
+        <section class="stage" id="stage">
+          <canvas id="office" aria-label="Escritório em pixel com os agentes"></canvas>
+        </section>
+        <nav class="agentbar" id="agentbar" aria-label="Agentes"></nav>
+      </div>
     </main>
+    <div class="win-layer" id="win-layer"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -1,8 +1,18 @@
 import type { AgentEvent } from "./events";
-import { Panel } from "./panel";
+import { EventHistory } from "./history";
 import { OfficeScene } from "./scene";
 import { Simulator } from "./simulator";
-import { initialState, reduce, type OfficeState } from "./state";
+import { initialState, pendingDecisions, reduce, type OfficeState } from "./state";
+import { AnswerForms, el } from "./ui";
+import {
+  AgentsView,
+  ConversationsView,
+  DecisionsView,
+  renderAgentBar,
+  renderLog,
+  renderTeam,
+} from "./views";
+import { WindowManager } from "./windows";
 import { WebSocketFeed, type ConnectionStatus } from "./wsfeed";
 
 function byId<T extends HTMLElement>(id: string): T {
@@ -11,20 +21,31 @@ function byId<T extends HTMLElement>(id: string): T {
   return node as T;
 }
 
+function readStorage(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStorage(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Sem armazenamento: a preferência só não é lembrada.
+  }
+}
+
 const params = new URLSearchParams(location.search);
 const badge = byId("feed-badge");
-const scene = new OfficeScene(byId<HTMLCanvasElement>("office"));
+const canvas = byId<HTMLCanvasElement>("office");
+const scene = new OfficeScene(canvas);
+const history = new EventHistory();
 
-let state = initialState;
-function show(next: OfficeState, settled = false): void {
-  state = next;
-  scene.sync(state, settled);
-  panel.renderAgents(state);
-}
-function onEvent(event: AgentEvent): void {
-  show(reduce(state, event));
-  panel.addEvent(event, state);
-}
+let state: OfficeState = initialState;
+
+// ------------------------------------------------------------------ origem
 
 /** `?sim` roda o simulador no navegador, sem backend. */
 const simulator = params.has("sim")
@@ -33,9 +54,16 @@ const simulator = params.has("sim")
 
 const STATUS_TEXT: Record<ConnectionStatus, string> = {
   connecting: "conectando…",
-  open: "conectado ao backend",
+  open: "ao vivo",
   closed: "sem conexão, tentando de novo",
 };
+
+function setBadge(text: string, tone: "open" | "closed" | null): void {
+  badge.textContent = text;
+  badge.title = text;
+  badge.classList.toggle("is-open", tone === "open");
+  badge.classList.toggle("is-closed", tone === "closed");
+}
 
 function backendUrl(): string {
   const url = new URL(params.get("ws") ?? "/ws", location.href);
@@ -49,21 +77,172 @@ const backend = simulator
   ? null
   : new WebSocketFeed({
       url: backendUrl(),
-      onSnapshot: (snapshot) => show(snapshot, true),
-      onStatus: (status) => {
-        badge.textContent = STATUS_TEXT[status];
-        badge.classList.toggle("is-open", status === "open");
-        badge.classList.toggle("is-closed", status === "closed");
+      onSnapshot: (snapshot, recent) => {
+        history.replace(recent);
+        state = snapshot;
+        scene.sync(state, true);
+        scheduleRender();
       },
+      onStatus: (status) =>
+        setBadge(STATUS_TEXT[status], status === "connecting" ? null : status),
       onServerError: (message) => console.warn(`Backend recusou: ${message}`),
     });
 
 const feed = simulator ?? backend!;
-const panel = new Panel(byId("agents"), byId("log"), (agentId, answer) =>
-  feed.answerDecision(agentId, answer),
+feed.subscribe((event: AgentEvent) => {
+  state = reduce(state, event);
+  history.add(event);
+  scene.sync(state);
+  scheduleRender();
+});
+
+// ----------------------------------------------------------------- janelas
+
+const wm = new WindowManager(byId("win-layer"), "pixel-office:windows:v1");
+const forms = new AnswerForms((agentId, answer) => feed.answerDecision(agentId, answer));
+
+interface DockItem {
+  id: string;
+  label: string;
+  icon: string;
+  badge?: () => number;
+}
+
+const conversations = new ConversationsView(
+  wm.register({
+    id: "conversas",
+    title: "Conversas",
+    size: { w: 900, h: 580 },
+    min: { w: 440, h: 280 },
+    bodyClass: "conv",
+  }),
+  forms,
+  () => scheduleRender(),
 );
-feed.subscribe(onEvent);
-backend?.start();
+const decisions = new DecisionsView(
+  wm.register({
+    id: "decisoes",
+    title: "Decisões pendentes",
+    tone: "alert",
+    size: { w: 580, h: 480 },
+    min: { w: 320, h: 200 },
+    bodyClass: "pad",
+  }),
+  forms,
+  openConversation,
+);
+const agents = new AgentsView(
+  wm.register({
+    id: "agentes",
+    title: "Agentes",
+    size: { w: 760, h: 520 },
+    min: { w: 320, h: 220 },
+    bodyClass: "pad",
+  }),
+  openConversation,
+);
+
+const DOCK: DockItem[] = [
+  { id: "conversas", label: "Conversas", icon: "✉" },
+  { id: "decisoes", label: "Decisões", icon: "?", badge: () => pendingDecisions(state) },
+  { id: "agentes", label: "Agentes", icon: "⚙" },
+];
+
+const dock = byId("dock");
+const dockButtons = DOCK.map((item) => {
+  const node = el("button", "dock-btn");
+  node.type = "button";
+  node.dataset.win = item.id;
+  const count = el("span", "dock-badge");
+  count.hidden = true;
+  node.append(el("span", "dock-icon", item.icon), el("span", "dock-label", item.label), count);
+  node.addEventListener("click", () => wm.toggle(item.id));
+  dock.append(node);
+  return { item, node, count };
+});
+
+function updateDock(): void {
+  for (const { item, node, count } of dockButtons) {
+    const status = wm.status(item.id);
+    node.classList.toggle("is-open", status.visibility === "open");
+    node.classList.toggle("is-min", status.visibility === "minimized");
+    node.classList.toggle("is-active", status.focused);
+    node.setAttribute("aria-pressed", String(status.visibility === "open"));
+    node.title =
+      status.visibility === "minimized" ? `${item.label} (minimizada)` : item.label;
+    const value = item.badge?.() ?? 0;
+    count.hidden = value === 0;
+    count.textContent = String(value);
+    node.classList.toggle("has-alert", value > 0);
+  }
+}
+
+function openConversation(agentId: string): void {
+  conversations.select(agentId);
+  wm.open("conversas");
+  scheduleRender();
+}
+
+wm.onChange(() => {
+  updateDock();
+  scheduleRender();
+});
+
+// ------------------------------------------------------------------ telas
+
+const team = byId("team");
+const log = byId("log");
+const agentbar = byId("agentbar");
+let renderQueued = false;
+let logVersion = -1;
+
+function scheduleRender(): void {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => {
+    renderQueued = false;
+    render();
+  });
+}
+
+function render(): void {
+  forms.prune(state);
+  renderTeam(team, state, openConversation);
+  renderAgentBar(agentbar, state, openConversation);
+  if (history.version !== logVersion) {
+    renderLog(log, state, history);
+    logVersion = history.version;
+  }
+  if (wm.isOpen("conversas")) conversations.render(state, history);
+  if (wm.isOpen("decisoes")) decisions.render(state, history);
+  if (wm.isOpen("agentes")) agents.render(state);
+  updateDock();
+}
+
+// --------------------------------------------------------- painel lateral
+
+const side = byId("side");
+const sideButton = byId<HTMLButtonElement>("btn-side");
+function setSide(open: boolean): void {
+  side.hidden = !open;
+  sideButton.textContent = open ? "◀" : "▶";
+  sideButton.setAttribute("aria-expanded", String(open));
+  sideButton.title = open ? "Recolher painel" : "Mostrar painel";
+  sideButton.setAttribute("aria-label", sideButton.title);
+  writeStorage("pixel-office:side", open ? "open" : "closed");
+}
+sideButton.addEventListener("click", () => setSide(side.hidden));
+setSide(readStorage("pixel-office:side") !== "closed");
+
+// ---------------------------------------------------------------- cena
+
+canvas.addEventListener("click", (event) => {
+  const id = scene.actorAt(event.clientX, event.clientY);
+  if (id) openConversation(id);
+});
+canvas.addEventListener("pointermove", (event) => {
+  canvas.style.cursor = scene.actorAt(event.clientX, event.clientY) ? "pointer" : "";
+});
 
 const stage = byId("stage");
 const fit = () => scene.resize(stage.clientWidth, stage.clientHeight);
@@ -74,7 +253,7 @@ let paused = false;
 let speed = 1;
 
 if (simulator) {
-  badge.textContent = "eventos simulados";
+  setBadge("simulação", "open");
   byId("sim-controls").hidden = false;
   const pauseButton = byId<HTMLButtonElement>("btn-pause");
   pauseButton.addEventListener("click", () => {
@@ -85,6 +264,9 @@ if (simulator) {
     speed = Number((event.target as HTMLSelectElement).value);
   });
 }
+
+backend?.start();
+render();
 
 let last = performance.now();
 function frame(now: number): void {

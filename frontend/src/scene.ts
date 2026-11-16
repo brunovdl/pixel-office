@@ -133,6 +133,24 @@ export class OfficeScene {
     }
   }
 
+  /** Agente sob o ponto da tela, para abrir a conversa ao clicar. */
+  actorAt(clientX: number, clientY: number): string | null {
+    const box = this.canvas.getBoundingClientRect();
+    if (box.width === 0 || box.height === 0) return null;
+    const x = ((clientX - box.left) / box.width) * WIDTH;
+    const y = ((clientY - box.top) / box.height) * HEIGHT;
+    let hit: Actor | null = null;
+    for (const actor of this.actors.values()) {
+      const inside =
+        Math.abs(x - actor.pos.x) <= SPRITE_W / 2 + 1 &&
+        y >= actor.pos.y - SPRITE_H - 1 &&
+        y <= actor.pos.y + 2;
+      // Quem está mais embaixo aparece na frente.
+      if (inside && (!hit || actor.pos.y > hit.pos.y)) hit = actor;
+    }
+    return hit?.id ?? null;
+  }
+
   update(dt: number): void {
     this.time += dt;
     for (const actor of this.actors.values()) this.updateActor(actor, dt);
