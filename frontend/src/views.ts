@@ -49,7 +49,7 @@ export function renderLog(list: HTMLElement, state: OfficeState, history: EventH
     const item = el("li", `log-item log-${event.type}`);
     item.append(
       el("time", "log-time", formatTime(event.ts)),
-      el("strong", "log-name", agentName(state, event.agentId)),
+      el("strong", "log-name", agentName(state, event.agentId, events)),
       el("span", "log-text", text),
     );
     items.push(item);
@@ -208,7 +208,7 @@ export class DecisionsView {
         const row = el("li", "answered-item");
         const head = el("div", "answered-head");
         head.append(
-          el("strong", "", agentName(state, item.agentId)),
+          el("strong", "", agentName(state, item.agentId, history.all)),
           el("time", "muted", formatTime(item.ts)),
         );
         row.append(head, el("div", "answered-question", item.question));

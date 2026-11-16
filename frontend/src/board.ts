@@ -173,13 +173,47 @@ export class ApiError extends Error {}
 
 type Fetch = typeof fetch;
 
-export class BoardApi {
+/** Base dos clientes da API: token, erros legíveis e corpo JSON ou binário. */
+export class ApiClient {
   constructor(
-    private readonly base: string,
-    private readonly token: string | null,
-    private readonly fetcher: Fetch = (...args) => fetch(...args),
+    protected readonly base: string,
+    protected readonly token: string | null,
+    protected readonly fetcher: Fetch = (...args) => fetch(...args),
   ) {}
 
+  /** URL completa, com o token na query quando pedido (para <img>, que não manda cabeçalho). */
+  url(path: string, withToken = false): string {
+    const url = new URL(path, this.base);
+    if (withToken && this.token) url.searchParams.set("token", this.token);
+    return url.toString();
+  }
+
+  protected async request(method: string, path: string, body?: unknown): Promise<unknown> {
+    const headers: Record<string, string> = {};
+    let payload: BodyInit | undefined;
+    if (body instanceof Blob) {
+      headers["Content-Type"] = body.type || "application/octet-stream";
+      payload = body;
+    } else if (body !== undefined) {
+      headers["Content-Type"] = "application/json";
+      payload = JSON.stringify(body);
+    }
+    if (this.token) headers.Authorization = `Bearer ${this.token}`;
+
+    let response: Response;
+    try {
+      response = await this.fetcher(this.url(path), { method, headers, body: payload });
+    } catch {
+      throw new ApiError("Sem conexão com o backend.");
+    }
+    if (response.status === 204) return null;
+    const data = (await response.json().catch(() => null)) as { detail?: unknown } | null;
+    if (!response.ok) throw new ApiError(errorMessage(data?.detail, response.status));
+    return data;
+  }
+}
+
+export class BoardApi extends ApiClient {
   createTask(data: TaskInput): Promise<Task> {
     return this.request("POST", "/api/tasks", data) as Promise<Task>;
   }
@@ -206,27 +240,6 @@ export class BoardApi {
 
   async deleteSpec(id: number): Promise<void> {
     await this.request("DELETE", `/api/specs/${id}`);
-  }
-
-  private async request(method: string, path: string, body?: unknown): Promise<unknown> {
-    const headers: Record<string, string> = {};
-    if (body !== undefined) headers["Content-Type"] = "application/json";
-    if (this.token) headers.Authorization = `Bearer ${this.token}`;
-
-    let response: Response;
-    try {
-      response = await this.fetcher(new URL(path, this.base).toString(), {
-        method,
-        headers,
-        body: body === undefined ? undefined : JSON.stringify(body),
-      });
-    } catch {
-      throw new ApiError("Sem conexão com o backend.");
-    }
-    if (response.status === 204) return null;
-    const data = (await response.json().catch(() => null)) as { detail?: unknown } | null;
-    if (!response.ok) throw new ApiError(errorMessage(data?.detail, response.status));
-    return data;
   }
 }
 

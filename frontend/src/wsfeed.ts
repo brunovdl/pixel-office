@@ -1,6 +1,7 @@
 /** Recebe os eventos do backend por WebSocket e reconecta sozinho. */
 
 import type { BoardData } from "./board";
+import type { PublicConfig } from "./config";
 import type { AgentEvent, EventFeed, EventListener } from "./events";
 import { stateFromSnapshot, type AgentState, type OfficeState } from "./state";
 
@@ -21,6 +22,8 @@ export interface WebSocketFeedOptions {
   onSnapshot: (state: OfficeState, recent: AgentEvent[]) => void;
   /** Tarefas e specs: ao conectar e a cada mudança. */
   onBoard?: (board: BoardData) => void;
+  /** Configuração (sem segredos): ao conectar e a cada mudança. */
+  onConfig?: (config: PublicConfig) => void;
   onStatus?: (status: ConnectionStatus) => void;
   /** Recusas do backend, como responder a quem não aguarda decisão. */
   onServerError?: (message: string) => void;
@@ -34,7 +37,9 @@ type ServerMessage =
       nextSeq: number;
       recent?: AgentEvent[];
       board?: BoardData;
+      config?: PublicConfig;
     }
+  | ({ kind: "config" } & PublicConfig)
   | { kind: "board"; tasks: BoardData["tasks"]; specs: BoardData["specs"] }
   | { kind: "event"; event: AgentEvent }
   | { kind: "error"; message: string };
@@ -106,6 +111,10 @@ export class WebSocketFeed implements EventFeed {
       const recent = Array.isArray(message.recent) ? message.recent : [];
       this.options.onSnapshot(stateFromSnapshot(message.agents, message.nextSeq), recent);
       if (message.board) this.options.onBoard?.(message.board);
+      if (message.config) this.options.onConfig?.(message.config);
+    } else if (message.kind === "config" && message.office) {
+      const { kind: _kind, ...config } = message;
+      this.options.onConfig?.(config);
     } else if (message.kind === "board" && Array.isArray(message.tasks)) {
       this.options.onBoard?.({ tasks: message.tasks, specs: message.specs ?? [] });
     } else if (message.kind === "event" && message.event) {

@@ -71,9 +71,19 @@ export function agentDot(agent: AgentState): HTMLElement {
   return dot;
 }
 
-/** Nome do agente, mesmo que ele já tenha saído do escritório. */
-export function agentName(state: OfficeState, agentId: string): string {
-  return state.agents[agentId]?.name ?? agentId;
+/** Nome do agente, mesmo que ele já tenha saído: procura a última entrada no histórico. */
+export function agentName(
+  state: OfficeState,
+  agentId: string,
+  events: readonly AgentEvent[] = [],
+): string {
+  const current = state.agents[agentId]?.name;
+  if (current) return current;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    if (event.type === "agent_joined" && event.agentId === agentId) return event.name;
+  }
+  return agentId;
 }
 
 /**

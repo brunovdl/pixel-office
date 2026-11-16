@@ -664,3 +664,93 @@ button:disabled { cursor: progress; opacity: 0.6; }
 
 .win-layer.is-compact .row { flex-wrap: wrap; padding-bottom: 6px; }
 .win-layer.is-compact .row-tags { justify-content: flex-start; padding-left: 8px; }
+
+/* ------------------------------------------------------------ marca */
+
+.brand { display: inline-flex; flex: none; align-items: center; gap: 8px; min-width: 0; }
+.brand-logo { height: 30px; max-width: 90px; object-fit: contain; border-radius: 2px; background: #fff; padding: 1px 3px; }
+.brand-name { max-width: 200px; overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ------------------------------------------------------ configurações */
+
+.cfg { display: grid; grid-template-columns: 190px minmax(0, 1fr); overflow: hidden; }
+
+.cfg-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  overflow-y: auto;
+  border-right: 1px solid var(--line-soft);
+}
+
+.cfg-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-color: transparent;
+  background: none;
+  text-align: left;
+}
+
+.cfg-tab:hover { background: var(--panel-2); }
+.cfg-tab.is-active { border-color: var(--accent); background: var(--panel-3); }
+.cfg-tab-icon { width: 14px; color: var(--accent); text-align: center; }
+
+.cfg-content { min-height: 0; overflow-y: auto; }
+.cfg-pane { max-width: 880px; padding: 14px; }
+.cfg-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.cfg-title { margin: 0 0 10px; color: var(--accent); font-size: 14px; }
+.cfg-head .cfg-title { margin: 0; }
+.cfg-note { margin: 8px 0; color: var(--muted); font-size: 11px; }
+.cfg-rows { padding: 0; overflow: visible; }
+.cfg-saved { margin: 8px 0 0; color: var(--ok); }
+
+.logo-section { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 16px; }
+.logo-text { display: flex; flex: 1; flex-direction: column; gap: 6px; min-width: 220px; }
+.logo-text p { margin: 0; }
+
+.logo-drop {
+  display: grid;
+  flex: none;
+  width: 180px;
+  height: 120px;
+  padding: 8px;
+  place-items: center;
+  border: 1px dashed var(--line);
+  background: #fbfbf5;
+  color: #555;
+}
+
+.logo-drop.is-over { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.logo-preview { max-width: 100%; max-height: 100%; object-fit: contain; }
+
+.checks { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.check input { accent-color: var(--accent); }
+
+.key-list { display: flex; flex-direction: column; gap: 8px; }
+.key-row { padding: 10px; border: 1px solid var(--line-soft); background: var(--panel-2); }
+.key-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.key-status { color: var(--muted); font-size: 11px; }
+.key-status.is-ok { color: var(--ok); }
+.key-line { display: flex; gap: 6px; }
+.key-line .input { flex: 1; }
+
+.secrets { display: flex; flex-direction: column; gap: 6px; }
+.secret-rows { display: flex; flex-direction: column; gap: 6px; }
+.secret-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 6px; }
+.secrets > .link { align-self: flex-start; }
+.btn-icon { width: 30px; padding: 0; }
+
+.row-main .agent-dot { align-self: center; }
+
+.win-layer.is-compact .cfg { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+.win-layer.is-compact .cfg-nav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line-soft); }
+.win-layer.is-compact .cfg-tab { flex: none; }
+.win-layer.is-compact .secret-row { grid-template-columns: minmax(0, 1fr) auto; }
+.win-layer.is-compact .secret-row .input:nth-child(2) { grid-column: 1; }
+
+@media (max-width: 560px) {
+  .brand-name { display: none; }
+}

@@ -1,5 +1,7 @@
 import { BoardApi, type BoardData } from "./board";
 import { SpecsView, TasksView } from "./boardviews";
+import { ConfigApi, EMPTY_CONFIG, type PublicConfig } from "./config";
+import { ConfigView } from "./configview";
 import type { AgentEvent } from "./events";
 import { EventHistory } from "./history";
 import { OfficeScene } from "./scene";
@@ -78,6 +80,12 @@ function backendUrl(): string {
 let board: BoardData = { tasks: [], specs: [] };
 let boardVersion = 0;
 
+let config: PublicConfig = EMPTY_CONFIG;
+let configVersion = 0;
+const configApi = simulator
+  ? null
+  : new ConfigApi(backendUrl().replace(/^ws/, "http"), params.get("token"));
+
 const api = simulator
   ? null
   : new BoardApi(backendUrl().replace(/^ws/, "http"), params.get("token"));
@@ -86,6 +94,12 @@ const backend = simulator
   ? null
   : new WebSocketFeed({
       url: backendUrl(),
+      onConfig: (next) => {
+        config = next;
+        configVersion++;
+        applyBranding();
+        scheduleRender();
+      },
       onBoard: (next) => {
         board = next;
         boardVersion++;
@@ -177,6 +191,16 @@ const specsView: SpecsView = new SpecsView(
     wm.open("tarefas");
   },
 );
+const configView = new ConfigView(
+  wm.register({
+    id: "config",
+    title: "Configurações",
+    size: { w: 980, h: 660 },
+    min: { w: 480, h: 320 },
+    bodyClass: "cfg",
+  }),
+  configApi,
+);
 const agents = new AgentsView(
   wm.register({
     id: "agentes",
@@ -210,7 +234,8 @@ const DOCK: DockItem[] = [
     badge: () => pendingDecisions(state),
     alert: true,
   },
-  { id: "agentes", label: "Agentes", icon: "⚙" },
+  { id: "agentes", label: "Agentes", icon: "☺" },
+  { id: "config", label: "Config", icon: "⚙" },
 ];
 
 const dock = byId("dock");
@@ -283,7 +308,38 @@ function render(): void {
   if (wm.isOpen("agentes")) agents.render(state);
   if (wm.isOpen("tarefas")) tasksView.update(board, boardVersion, state);
   if (wm.isOpen("specs")) specsView.update(board, boardVersion, state);
+  if (wm.isOpen("config")) configView.update(config, configVersion, state);
   updateDock();
+}
+
+// ------------------------------------------------------------------ marca
+
+const brandLogo = byId<HTMLImageElement>("brand-logo");
+const brandName = byId("brand-name");
+let shownLogo: number | null = null;
+
+function applyBranding(): void {
+  const { name, logo } = config.office;
+  brandName.textContent = name;
+  document.title = name;
+  const version = logo?.updatedAt ?? null;
+  if (version === shownLogo) return;
+  shownLogo = version;
+  if (!logo || !configApi) {
+    brandLogo.hidden = true;
+    brandLogo.removeAttribute("src");
+    scene.setLogo(null);
+    return;
+  }
+  const url = configApi.logoUrl(logo.updatedAt);
+  brandLogo.src = url;
+  brandLogo.alt = `Logo de ${name}`;
+  brandLogo.hidden = false;
+  const image = new Image();
+  image.onload = () => {
+    if (shownLogo === version) scene.setLogo(image);
+  };
+  image.src = url;
 }
 
 // --------------------------------------------------------- painel lateral

@@ -222,3 +222,105 @@ def test_board_routes_require_token():
             "/api/tasks", json={"title": "x"}, headers={"Authorization": "Bearer segredo"}
         )
         assert response.status_code == 201
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+
+
+class TestConfigApi:
+    def test_secrets_go_in_and_never_come_out(self, client):
+        secret = "gsk_live_abcdefghijkl"
+        assert client.put("/api/config/keys/groq", json={"value": secret}).status_code == 204
+        body = client.get("/api/config").text
+        assert secret not in body
+        groq = next(p for p in client.get("/api/config").json()["providers"] if p["id"] == "groq")
+        assert groq["hint"] == "…ijkl"
+        assert client.put("/api/config/keys/outro", json={"value": "x"}).status_code == 404
+        assert client.delete("/api/config/keys/groq").status_code == 204
+
+    def test_logo_upload_and_download(self, client):
+        response = client.put(
+            "/api/config/logo", content=PNG, headers={"content-type": "image/png"}
+        )
+        assert response.json()["logo"]["mime"] == "image/png"
+        logo = client.get("/api/config/logo")
+        assert logo.content == PNG
+        assert logo.headers["content-type"] == "image/png"
+        assert logo.headers["x-content-type-options"] == "nosniff"
+
+        svg = client.put(
+            "/api/config/logo", content=b"<svg/>", headers={"content-type": "image/svg+xml"}
+        )
+        assert svg.status_code == 422
+        big = client.put("/api/config/logo", content=PNG + b"\x00" * (2 * 1024 * 1024))
+        assert big.status_code == 413
+
+        assert client.delete("/api/config/logo").status_code == 204
+        assert client.get("/api/config/logo").status_code == 404
+
+    def test_office_mcps_and_agents(self, client):
+        office = client.put(
+            "/api/config/office",
+            json={"name": "MAI Martins", "masterPrompt": "# Regras", "promptFiles": ["AGENTS.md"]},
+        ).json()
+        assert office["name"] == "MAI Martins"
+
+        created = client.post(
+            "/api/config/mcps",
+            json={
+                "id": "github",
+                "name": "GitHub",
+                "command": "npx",
+                "env": {"TOKEN": "ghp_123456789012"},
+            },
+        )
+        assert created.status_code == 201
+        assert "ghp_" not in created.text
+        assert (
+            client.patch("/api/config/mcps/github", json={"enabled": False}).json()["enabled"]
+            is False
+        )
+
+        agent = client.post(
+            "/api/config/agents", json={"id": "dados", "name": "Dados", "mcps": ["github"]}
+        )
+        assert agent.status_code == 201
+        bad = client.post("/api/config/agents", json={"id": "x", "name": "X", "mcps": ["nada"]})
+        assert (bad.status_code, bad.json()["detail"]) == (422, "MCP não existe: nada")
+        assert (
+            client.patch("/api/config/agents/dados", json={"role": "Dados"}).json()["role"]
+            == "Dados"
+        )
+        assert client.delete("/api/config/mcps/github").status_code == 204
+        assert client.get("/api/config").json()["agents"][0]["mcps"] == []
+        assert client.delete("/api/config/agents/dados").status_code == 204
+        assert client.delete("/api/config/agents/dados").status_code == 404
+
+    def test_websocket_gets_config_in_snapshot_and_on_change(self, client):
+        with client.websocket_connect("/ws") as ws:
+            assert ws.receive_json()["config"]["office"]["name"] == "Pixel Office"
+            client.put("/api/config/keys/openai", json={"value": "sk-secreta-123456"})
+            message = ws.receive_json()
+            assert message["kind"] == "config"
+            assert "sk-secreta" not in str(message)
+
+
+def test_config_routes_require_token():
+    with TestClient(create_app(Hub(), token="segredo")) as client:
+        client.put("/api/config/logo", content=PNG, headers={"Authorization": "Bearer segredo"})
+        assert client.get("/api/config").status_code == 401
+        assert client.put("/api/config/keys/groq", json={"value": "x"}).status_code == 401
+        assert client.get("/api/config/logo").status_code == 401
+        assert client.get("/api/config/logo?token=errado").status_code == 401
+        assert client.get("/api/config/logo?token=segredo").content == PNG
+
+
+def test_roster_puts_configured_team_in_the_office():
+    from pixel_office.config import Config
+
+    hub = Hub(config=Config(seed_defaults=True))
+    with TestClient(create_app(hub, roster=True)) as client:
+        agents = client.get("/api/state").json()["agents"]
+        assert [a["id"] for a in agents] == ["orq", "spec", "be", "fe", "qa", "rev"]
+        client.patch("/api/config/agents/qa", json={"enabled": False})
+        assert "qa" not in [a["id"] for a in client.get("/api/state").json()["agents"]]

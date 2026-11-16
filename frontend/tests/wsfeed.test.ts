@@ -107,6 +107,26 @@ describe("WebSocketFeed", () => {
     expect(boards).toEqual([board, { tasks: [{ id: 2 }], specs: [] }]);
   });
 
+  it("entrega a configuração do snapshot e das atualizações", () => {
+    const configs: unknown[] = [];
+    const sockets: FakeSocket[] = [];
+    const feed = new WebSocketFeed({
+      url: "ws://teste/ws",
+      onSnapshot: () => {},
+      onConfig: (config) => configs.push(config),
+      createSocket: (url) => {
+        const socket = new FakeSocket(url);
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    feed.start();
+    const config = { office: { name: "A" }, providers: [], mcps: [], agents: [] };
+    sockets[0]!.receive({ kind: "snapshot", agents: [], nextSeq: 0, config });
+    sockets[0]!.receive({ kind: "config", ...config, office: { name: "B" } });
+    expect(configs).toEqual([config, { ...config, office: { name: "B" } }]);
+  });
+
   it("repassa recusas do backend e ignora mensagens que não entende", () => {
     const { feed, sockets, snapshots, events, errors } = setup();
     feed.start();

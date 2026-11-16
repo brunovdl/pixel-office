@@ -10,6 +10,7 @@ import uvicorn
 
 from .app import DEFAULT_ORIGINS, create_app
 from .board import Board
+from .config import Config
 from .hub import Hub
 from .simulator import Simulator
 
@@ -37,7 +38,7 @@ def main() -> None:
     parser.add_argument(
         "--db",
         default=env.get("PIXEL_OFFICE_DB"),
-        help=f"arquivo SQLite de tarefas e specs (padrão: {DEFAULT_DB}; "
+        help=f"arquivo SQLite de tarefas, specs e configuração (padrão: {DEFAULT_DB}; "
         "com --simulate, só em memória)",
     )
     args = parser.parse_args()
@@ -56,13 +57,14 @@ def main() -> None:
     )
 
     db = args.db or (":memory:" if args.simulate else DEFAULT_DB)
-    hub = Hub(board=Board(db))
+    hub = Hub(board=Board(db), config=Config(db, seed_defaults=True))
     app = create_app(
         hub,
         token=token,
         allowed_origins=origins,
         simulator=Simulator(hub, seed=args.seed, speed=args.speed) if args.simulate else None,
         static_dir=FRONTEND_DIST if FRONTEND_DIST.is_dir() else None,
+        roster=True,
     )
     uvicorn.run(app, host=args.host, port=args.port)
 

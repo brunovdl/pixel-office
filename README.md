@@ -13,7 +13,8 @@ ligado ainda: quem gera os eventos é um time simulado.
 | Parte | Situação |
 | --- | --- |
 | Escritório em pixel (`frontend/`) | Funciona, ligado ao backend, com janelas flutuantes |
-| Backend em Python (`backend/`) | Funciona: estado, WebSocket, entrada de eventos por HTTP, tarefas e specs em SQLite |
+| Backend em Python (`backend/`) | Funciona: estado, WebSocket, entrada de eventos por HTTP, tarefas, specs e configuração em SQLite |
+| Configurações | Funciona: nome, logo, prompt mestre, chaves de API, MCPs e agentes |
 | Protocolo de eventos | `backend/pixel_office/events.py` e `frontend/src/events.ts` |
 | Adaptador Groq | Não começou |
 | Adaptador Claude Code | Não começou |
@@ -55,7 +56,7 @@ Sem backend, `http://localhost:5173/?sim` roda um simulador dentro do navegador
 | `--simulate` | desligado | Roda o time simulado |
 | `--speed N` | 1 | Acelera o simulador |
 | `--seed N` | 1 | Semente do simulador |
-| `--db`, `PIXEL_OFFICE_DB` | `backend/data/pixel-office.db` | Arquivo SQLite de tarefas e specs. Com `--simulate` e sem `--db`, fica só em memória |
+| `--db`, `PIXEL_OFFICE_DB` | `backend/data/pixel-office.db` | Arquivo SQLite de tarefas, specs e configuração. Com `--simulate` e sem `--db`, fica só em memória |
 | `--host`, `PIXEL_OFFICE_HOST` | `127.0.0.1` | Endereço de escuta |
 | `--port`, `PIXEL_OFFICE_PORT` | `8000` | Porta |
 | `PIXEL_OFFICE_TOKEN` | sem token | Exige o token no WebSocket e nas rotas de API |
@@ -92,6 +93,8 @@ adaptador (simulador hoje) -> Hub -> WebSocket -> reduce(estado, evento) -> cena
 | `state.py` | Estado do escritório derivado dos eventos |
 | `hub.py` | Guarda o estado, distribui eventos e controla decisões pendentes |
 | `board.py` | Tarefas e specs em SQLite, com validação |
+| `config.py` | Configuração: escritório, logo, chaves de API, MCPs e agentes; segredos criptografados |
+| `roster.py` | Põe no escritório os agentes ativos da configuração e tira os desativados |
 | `app.py` | Rotas HTTP e o WebSocket |
 | `simulator.py` | Time falso que publica no hub |
 | `__main__.py` | Linha de comando |
@@ -119,6 +122,12 @@ curl -X POST localhost:8000/api/events -H 'content-type: application/json' \
 | `GET/PATCH/DELETE /api/tasks/{id}` | Lê, altera (só os campos enviados) ou exclui uma tarefa |
 | `GET/POST /api/specs` | Lista (resumo, sem o texto) ou cria specs |
 | `GET/PATCH/DELETE /api/specs/{id}` | Lê com texto e critérios, altera ou exclui uma spec |
+| `GET /api/config` | Configuração sem os segredos (chaves e valores de MCP aparecem só como `…abcd`) |
+| `PUT /api/config/office` | Nome, prompt mestre e arquivos em que ele é publicado |
+| `GET/PUT/DELETE /api/config/logo` | Logo; o envio é o arquivo puro no corpo (PNG, JPEG, WEBP ou GIF, até 2 MB) |
+| `PUT/DELETE /api/config/keys/{provedor}` | Chave de API: `anthropic`, `claude_oauth`, `groq`, `openai`, `google` |
+| `POST /api/config/mcps`, `PATCH/DELETE /api/config/mcps/{id}` | Servidores MCP; nos segredos, `null` mantém o valor salvo |
+| `POST /api/config/agents`, `PATCH/DELETE /api/config/agents/{id}` | Agentes do time |
 | `WS /ws` | Estado ao conectar e eventos em seguida |
 
 Mensagens do WebSocket:
@@ -128,6 +137,7 @@ Mensagens do WebSocket:
 | servidor -> tela | `{"kind":"snapshot","agents":[...],"nextSeq":n,"recent":[...]}` ao conectar (`recent` traz os últimos 500 eventos) |
 | servidor -> tela | `{"kind":"event","event":{...}}` a cada evento |
 | servidor -> tela | `{"kind":"board","tasks":[...],"specs":[...]}` a cada mudança em tarefas ou specs (o snapshot também traz `board`) |
+| servidor -> tela | `{"kind":"config",...}` a cada mudança na configuração, sem segredos (o snapshot também traz `config`) |
 | servidor -> tela | `{"kind":"error","message":"..."}` quando recusa um comando |
 | tela -> servidor | `{"kind":"answer_decision","agentId":"be","answer":"Pode"}` |
 
@@ -145,6 +155,7 @@ dois lados e nesse arquivo.
 | `views.ts` | Conteúdo das janelas (Conversas, Decisões, Agentes) e dos painéis |
 | `boardviews.ts`, `board.ts` | Janelas de Tarefas e Specs, filtros e cliente da API |
 | `markdown.ts` | Markdown simples do texto das specs, sem HTML |
+| `configview.ts`, `config.ts` | Janela de configurações e cliente da API de configuração |
 | `history.ts`, `timeline.ts` | Eventos recentes e o histórico de cada agente |
 | `ui.ts` | Textos de status, formulário de resposta e utilitários de tela |
 | `state.ts` | Máquina de estados dos agentes (`reduce`) |
@@ -197,6 +208,7 @@ Os botões no topo abrem as janelas:
 | Conversas | Histórico de cada agente: tarefas, ferramentas, mensagens, perguntas e respostas. Quando o agente pede decisão, a resposta vai pelo rodapé |
 | Decisões | Decisões pendentes com campo de resposta e as respondidas recentemente. O botão mostra quantas estão pendentes. No time simulado, a decisão sem resposta se resolve sozinha em 60 segundos |
 | Agentes | Papel, status, tarefa atual e última atividade de cada agente |
+| Config | Configurações do escritório, em quatro seções (abaixo) |
 
 Toda janela pode ser:
 
@@ -213,8 +225,35 @@ O botão no topo abre a janela, traz para a frente ou minimiza se ela já estive
 foco. Posição, tamanho e quais janelas estavam abertas ficam salvos no navegador.
 Em telas com menos de 720 px de largura, as janelas ocupam a área inteira.
 
+### Configurações
+
+O botão **⚙ Config** abre o painel de configuração do escritório:
+
+| Seção | O que configura |
+| --- | --- |
+| Escritório | Nome (topo e título da aba), logo (topo e quadro na parede do escritório, com envio por botão ou arrastando a imagem) e prompt mestre, com a escolha de publicar como CLAUDE.md, AGENTS.md e GEMINI.md |
+| Chaves de API | Uma chave por provedor: Anthropic, Claude Code (token OAuth), Groq, OpenAI e Google Gemini |
+| MCPs | Servidores por comando local (stdio, com argumentos e variáveis de ambiente) ou remoto (http, com cabeçalhos) |
+| Agentes | Nome, id, papel, provedor, modelo, prompt próprio, MCPs que pode usar e se está ativo |
+
+O time do escritório vem da lista de agentes: na primeira execução ela é preenchida
+com os seis agentes padrão; agente ativo entra na sala, desativado ou excluído sai,
+e renomear muda o nome na hora.
+
+Chaves de API e valores de variáveis e cabeçalhos dos MCPs são segredos: ficam
+criptografados no banco com a chave de `backend/data/secret.key` (criada na primeira
+execução, legível só pelo dono do arquivo) e nunca voltam pela API nem pelo WebSocket;
+a tela mostra só os quatro últimos caracteres. Quem tiver o banco **e** o
+`secret.key` consegue abrir os segredos, então guarde os dois com o mesmo cuidado. Se
+o `secret.key` for perdido, os segredos salvos precisam ser cadastrados de novo.
+
+Provedor, modelo, prompts e MCPs ficam salvos, mas ainda não têm efeito: os agentes
+são simulados até o adaptador do provedor ser ligado. O prompt mestre também só vira
+arquivo quando o harness estiver ligado a um repositório.
+
 ## Próximos passos
 
-1. Adaptador Groq: loop de agente com ferramentas, publicando no hub.
+1. Adaptador Groq: loop de agente com ferramentas, publicando no hub e usando a
+   chave, o modelo, o prompt e os MCPs de cada agente.
 2. Adaptador Claude Code: executa o `claude` e traduz a saída para estes eventos.
 3. Entrada de tarefas pela tela, para dizer aos agentes o que fazer.

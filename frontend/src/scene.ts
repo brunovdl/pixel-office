@@ -71,6 +71,7 @@ export class OfficeScene {
   private readonly actors = new Map<string, Actor>();
   private scale = 1;
   private time = 0;
+  private logo: HTMLImageElement | null = null;
   private pending = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
@@ -95,6 +96,11 @@ export class OfficeScene {
    * Com `settled`, quem é novo já aparece no lugar em vez de entrar pela porta;
    * serve para o estado recebido de uma vez ao conectar.
    */
+  /** Logo da empresa, num quadro na parede. null tira o quadro. */
+  setLogo(image: HTMLImageElement | null): void {
+    this.logo = image;
+  }
+
   sync(state: OfficeState, settled = false): void {
     this.pending = pendingDecisions(state);
 
@@ -162,6 +168,7 @@ export class OfficeScene {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(this.background, 0, 0);
     this.drawDecisionNotes();
+    this.drawLogo();
 
     const items: Drawable[] = [
       { sortY: 48, draw: () => this.drawBookshelf() },
@@ -344,6 +351,30 @@ export class OfficeScene {
     rect("#4d5566", ENTRANCE.col * TILE + 2, ENTRANCE.row * TILE + 4, 12, 9);
 
     return canvas;
+  }
+
+  /** Quadro entre a janela da direita e a cafeteira. */
+  private drawLogo(): void {
+    const image = this.logo;
+    if (!image || !image.complete || image.naturalWidth === 0) return;
+    const frame = { x: 244, y: 3, w: 26, h: 23 };
+    this.rect("#5b4330", frame.x, frame.y, frame.w, frame.h);
+    this.rect("#fbfbf5", frame.x + 1, frame.y + 1, frame.w - 2, frame.h - 2);
+    const box = { w: frame.w - 4, h: frame.h - 4 };
+    const scale = Math.min(box.w / image.naturalWidth, box.h / image.naturalHeight);
+    const w = image.naturalWidth * scale;
+    const h = image.naturalHeight * scale;
+    // Com suavização, a logo sai nítida na resolução real do canvas, não em pixels grandes.
+    this.ctx.imageSmoothingEnabled = true;
+    this.ctx.imageSmoothingQuality = "high";
+    this.ctx.drawImage(
+      image,
+      frame.x + 2 + (box.w - w) / 2,
+      frame.y + 2 + (box.h - h) / 2,
+      w,
+      h,
+    );
+    this.ctx.imageSmoothingEnabled = false;
   }
 
   private drawDecisionNotes(): void {

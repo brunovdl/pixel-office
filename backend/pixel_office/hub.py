@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .board import Board
+from .config import Config
 from .events import AgentEvent, parse_event, to_wire
 from .state import OfficeState
 
@@ -31,10 +32,11 @@ def now_ms() -> int:
 class Subscription:
     """Estado no momento da assinatura e a fila dos eventos seguintes.
 
-    O snapshot traz também `recent` (os últimos eventos, em ordem de chegada) e
-    `board` (tarefas e specs). A fila recebe mensagens prontas para o WebSocket:
-    `{"kind": "event", ...}` ou `{"kind": "board", ...}`. Um `None` avisa que o
-    assinante ficou para trás e foi removido.
+    O snapshot traz também `recent` (os últimos eventos, em ordem de chegada),
+    `board` (tarefas e specs) e `config` (configuração sem os segredos). A fila
+    recebe mensagens prontas para o WebSocket, com `kind` igual a "event",
+    "board" ou "config". Um `None` avisa que o assinante ficou para trás e foi
+    removido.
     """
 
     snapshot: dict[str, Any]
@@ -42,10 +44,17 @@ class Subscription:
 
 
 class Hub:
-    def __init__(self, clock: Callable[[], int] = now_ms, board: Board | None = None) -> None:
+    def __init__(
+        self,
+        clock: Callable[[], int] = now_ms,
+        board: Board | None = None,
+        config: Config | None = None,
+    ) -> None:
         self.state = OfficeState()
         self.board = board or Board(clock=clock)
         self.board.on_change(self._board_changed)
+        self.config = config or Config(clock=clock)
+        self.config.on_change(self._config_changed)
         self._clock = clock
         self._subscriptions: set[Subscription] = set()
         self._decisions: dict[str, asyncio.Future[str | None]] = {}
@@ -85,6 +94,7 @@ class Hub:
                 **self.state.snapshot(),
                 "recent": list(self._history),
                 "board": self.board.summary(),
+                "config": self.config.public(),
             },
             queue=asyncio.Queue(maxsize=QUEUE_LIMIT),
         )
@@ -127,6 +137,9 @@ class Hub:
         if future and not future.done():
             future.set_result(answer)
         return True
+
+    def _config_changed(self) -> None:
+        self._broadcast({"kind": "config", **self.config.public()})
 
     def _board_changed(self) -> None:
         self._broadcast({"kind": "board", **self.board.summary()})

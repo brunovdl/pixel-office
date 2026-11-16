@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { AgentEvent } from "../src/events";
 import { EventHistory } from "../src/history";
 import { answeredDecisions, toEntry } from "../src/timeline";
-import { describe as describeEvent } from "../src/ui";
+import { agentName, describe as describeEvent } from "../src/ui";
+import { initialState } from "../src/state";
 
 describe("toEntry", () => {
   it("mostra tarefa, ferramentas, mensagens e fim", () => {
@@ -77,5 +78,17 @@ describe("describe", () => {
     expect(describeEvent({ type: "tool_started", agentId: "a", tool: "Read", detail: "x.py", ts: 1 })).toBe("usa Read · x.py");
     expect(describeEvent({ type: "thinking", agentId: "a", ts: 1 })).toBeNull();
     expect(describeEvent({ type: "tool_finished", agentId: "a", tool: "Read", ok: true, ts: 1 })).toBeNull();
+  });
+});
+
+describe("agentName", () => {
+  it("usa o nome da última entrada quando o agente já saiu", () => {
+    const events: AgentEvent[] = [
+      { type: "agent_joined", agentId: "qa", name: "QA", role: "r", ts: 1 },
+      { type: "agent_joined", agentId: "qa", name: "QA Revisor", role: "r", ts: 2 },
+      { type: "agent_left", agentId: "qa", ts: 3 },
+    ];
+    expect(agentName(initialState, "qa", events)).toBe("QA Revisor");
+    expect(agentName(initialState, "nunca", events)).toBe("nunca");
   });
 });

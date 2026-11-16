@@ -33,7 +33,7 @@ import { button, el } from "./ui";
 
 const NO_BACKEND = "Tarefas e specs precisam do backend. Abra a página sem ?sim.";
 
-function formatDateTime(ts: number): string {
+export function formatDateTime(ts: number): string {
   return new Date(ts).toLocaleString("pt-BR", {
     day: "2-digit",
     month: "2-digit",
@@ -60,13 +60,13 @@ function statusTag(kind: "task" | "spec", status: TaskStatus | SpecStatus): HTML
   return el("span", `tag tag-status ${kind}-${status}`, label.toLowerCase());
 }
 
-function field(label: string, control: HTMLElement): HTMLElement {
+export function field(label: string, control: HTMLElement): HTMLElement {
   const wrap = el("label", "field");
   wrap.append(el("span", "field-label", label), control);
   return wrap;
 }
 
-function select<T extends string>(
+export function select<T extends string>(
   options: readonly { value: T; label: string }[],
   value: T,
 ): HTMLSelectElement {
@@ -81,7 +81,7 @@ function select<T extends string>(
 }
 
 /** Botão de excluir em dois cliques, para não apagar por engano. */
-function deleteButton(onConfirm: () => void): HTMLButtonElement {
+export function deleteButton(onConfirm: () => void): HTMLButtonElement {
   const node = button("btn-danger", "Excluir", () => {
     if (node.classList.contains("is-armed")) onConfirm();
     else {
@@ -97,7 +97,7 @@ function deleteButton(onConfirm: () => void): HTMLButtonElement {
 }
 
 /** Roda a ação com os botões travados e mostra o erro no formulário. */
-async function submitting(
+export async function submitting(
   form: HTMLElement,
   error: HTMLElement,
   action: () => Promise<void>,
@@ -152,7 +152,7 @@ function searchInput(placeholder: string, onInput: (query: string) => void): HTM
 }
 
 /** Esc no formulário cancela a edição em vez de fechar a janela. */
-function cancelOnEscape(form: HTMLElement, cancel: () => void): void {
+export function cancelOnEscape(form: HTMLElement, cancel: () => void): void {
   form.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
     event.stopPropagation();

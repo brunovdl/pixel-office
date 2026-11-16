@@ -1,66 +1,56 @@
 """Time falso que publica eventos no hub, para testar sem provedor de IA."""
 
 import asyncio
+import logging
 import random
+import zlib
 from dataclasses import dataclass
 
 from .board import Board, SpecCreate, TaskCreate, TaskUpdate
 from .hub import Hub
 
+log = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
-class Member:
-    id: str
-    name: str
-    role: str
+class Work:
+    """Tarefas que o agente simulado inventa e ferramentas que ele usa."""
+
     tasks: tuple[str, ...]
     # Ferramentas com repetição proporcional à frequência de uso.
     tools: tuple[str, ...]
 
 
-TEAM: tuple[Member, ...] = (
-    Member(
-        "orq",
-        "Orquestrador",
-        "Coordena o time",
+# Jeito de trabalhar de cada agente padrão; agentes novos usam GENERIC.
+WORK: dict[str, Work] = {
+    "orq": Work(
         ("Planejar a sprint", "Distribuir tarefas do backlog", "Revisar o andamento"),
         ("Read", "Read", "Grep", "Write"),
     ),
-    Member(
-        "spec",
-        "Especificador",
-        "Escreve as specs",
+    "spec": Work(
         ("Escrever spec de login", "Detalhar critérios de aceite", "Revisar spec de relatórios"),
         ("Read", "Grep", "Write", "Edit", "Edit"),
     ),
-    Member(
-        "be",
-        "Dev Backend",
-        "API e dados",
+    "be": Work(
         ("Criar endpoint de sessões", "Corrigir validação de entrada", "Adicionar migração"),
         ("Read", "Grep", "Edit", "Edit", "Write", "Bash"),
     ),
-    Member(
-        "fe",
-        "Dev Frontend",
-        "Telas",
+    "fe": Work(
         ("Montar tela de cadastro", "Ajustar layout responsivo", "Ligar formulário à API"),
         ("Read", "Glob", "Edit", "Edit", "Write", "Bash"),
     ),
-    Member(
-        "qa",
-        "QA",
-        "Testes",
+    "qa": Work(
         ("Rodar a suíte de testes", "Escrever teste de regressão", "Validar critérios de aceite"),
         ("Read", "Bash", "Bash", "Bash", "Edit"),
     ),
-    Member(
-        "rev",
-        "Code Reviewer",
-        "Revisão de código",
+    "rev": Work(
         ("Revisar PR de sessões", "Revisar PR de cadastro", "Conferir cobertura de testes"),
         ("Read", "Read", "Read", "Grep", "Bash"),
     ),
+}
+GENERIC = Work(
+    ("Investigar um bug", "Atualizar a documentação", "Revisar o backlog"),
+    ("Read", "Grep", "Edit", "Bash"),
 )
 
 FILES = (
@@ -147,36 +137,72 @@ SEED_TASKS: tuple[tuple[str, str, int, str], ...] = (
 
 
 class Simulator:
+    """Faz os agentes ativos da configuração trabalharem com eventos falsos.
+
+    Acompanha a configuração: agente novo começa a trabalhar, agente desativado
+    ou excluído para.
+    """
+
     def __init__(self, hub: Hub, *, seed: int = 1, speed: float = 1.0) -> None:
         if speed <= 0:
             raise ValueError("speed deve ser maior que zero")
         self.hub = hub
         self.seed = seed
         self.speed = speed
+        self._loops: dict[str, asyncio.Task[None]] = {}
 
     async def run(self) -> None:
         """Roda até ser cancelado."""
         if self.hub.board.is_empty():
             seed_board(self.hub.board)
-        async with asyncio.TaskGroup() as group:
-            for index, member in enumerate(TEAM):
-                group.create_task(self._agent(member, index))
+        stop = self.hub.config.on_change(self._reconcile)
+        try:
+            self._reconcile()
+            await asyncio.Event().wait()
+        finally:
+            stop()
+            loops = list(self._loops.values())
+            self._loops.clear()
+            for loop in loops:
+                loop.cancel()
+            await asyncio.gather(*loops, return_exceptions=True)
+
+    def _reconcile(self) -> None:
+        active = [agent["id"] for agent in self.hub.config.agents() if agent["enabled"]]
+        for agent_id in list(self._loops):
+            if agent_id not in active:
+                self._loops.pop(agent_id).cancel()
+        for index, agent_id in enumerate(active):
+            if agent_id not in self._loops:
+                task = asyncio.get_running_loop().create_task(self._agent(agent_id, index))
+                self._loops[agent_id] = task
 
     async def _sleep(self, seconds: float) -> None:
         await asyncio.sleep(seconds / self.speed)
 
-    async def _agent(self, member: Member, index: int) -> None:
+    async def _agent(self, agent_id: str, index: int) -> None:
+        try:
+            await self._work(agent_id, index)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Agente simulado %s parou com erro", agent_id)
+
+    async def _work(self, agent_id: str, index: int) -> None:
         # Gerador próprio, para a sequência do agente não depender dos outros.
-        rng = random.Random(self.seed * 31 + index)
+        rng = random.Random(self.seed * 31 + zlib.crc32(agent_id.encode()))
         hub = self.hub
-        agent_id = member.id
+        work = WORK.get(agent_id, GENERIC)
 
         await self._sleep(0.4 + index * 0.7)
-        hub.emit("agent_joined", agent_id, name=member.name, role=member.role)
+        if agent_id not in hub.state.agents:
+            # Sem Roster (como nos testes), o próprio simulador põe o agente na sala.
+            agent = hub.config.agent(agent_id)
+            hub.emit("agent_joined", agent_id, name=agent["name"], role=agent["role"] or "Agente")
 
         while True:
             await self._sleep(rng.uniform(3, 10))
-            task_id, title = self._claim(member, rng)
+            task_id, title = self._claim(agent_id, work, rng)
             hub.emit("task_started", agent_id, task=title)
             await self._sleep(rng.uniform(1, 3))
 
@@ -192,7 +218,7 @@ class Simulator:
                     )
                     await self._sleep(rng.uniform(0.8, 2))
 
-                tool = rng.choice(member.tools)
+                tool = rng.choice(work.tools)
                 hub.emit("tool_started", agent_id, tool=tool, detail=_detail(rng, tool))
                 await self._sleep(rng.uniform(1.5, 5))
                 hub.emit("tool_finished", agent_id, tool=tool, ok=rng.random() < 0.9)
@@ -210,13 +236,13 @@ class Simulator:
                 hub.emit("task_finished", agent_id, ok=False)
                 await self._sleep(3)
 
-    def _claim(self, member: Member, rng: random.Random) -> tuple[int | None, str]:
+    def _claim(self, agent_id: str, work: Work, rng: random.Random) -> tuple[int | None, str]:
         """Pega a tarefa pendente mais antiga do agente, ou cria uma nova."""
         board = self.hub.board
         pending = [
             task
             for task in board.tasks()
-            if task["agentId"] == member.id and task["status"] == "pending"
+            if task["agentId"] == agent_id and task["status"] == "pending"
         ]
         if pending:
             task = board.update_task(pending[0]["id"], TaskUpdate(status="in_progress"))
@@ -228,9 +254,9 @@ class Simulator:
             ]
             task = board.create_task(
                 TaskCreate(
-                    title=rng.choice(member.tasks),
+                    title=rng.choice(work.tasks),
                     status="in_progress",
-                    agent_id=member.id,
+                    agent_id=agent_id,
                     spec_id=rng.choice(open_specs) if open_specs else None,
                 )
             )
