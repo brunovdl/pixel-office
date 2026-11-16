@@ -210,6 +210,16 @@ class OfficeSettings(_Input):
         return [name for name in PROMPT_FILES if name in files]
 
 
+class RunnerSettings(_Input):
+    """Como o executor roda as ferramentas no servidor."""
+
+    workspace_dir: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)] = ""
+    permission_mode: Literal["acceptEdits", "auto", "bypassPermissions"] = "acceptEdits"
+    timeout_minutes: int = Field(30, ge=1, le=480)
+    max_turns: int | None = Field(None, ge=1, le=1000)
+    max_parallel: int = Field(1, ge=1, le=8)
+
+
 class KeyInput(_Input):
     value: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=8000)]
 
@@ -310,6 +320,7 @@ class Config:
         """Tudo que a tela pode ver. Segredos aparecem só como dica."""
         return {
             "office": self.office(),
+            "runner": self.runner(),
             "credentials": self.credentials(),
             "mcps": self.mcps(),
             "agents": self.agents(),
@@ -331,6 +342,15 @@ class Config:
         self._set_setting("office", data.model_dump())
         self._changed()
         return self.office()
+
+    def runner(self) -> dict[str, Any]:
+        settings = RunnerSettings.model_validate(self._setting("runner") or {})
+        return settings.model_dump(by_alias=True)
+
+    def set_runner(self, data: RunnerSettings) -> dict[str, Any]:
+        self._set_setting("runner", data.model_dump(by_alias=True))
+        self._changed()
+        return self.runner()
 
     def logo(self) -> tuple[str, bytes] | None:
         row = self._db.execute("SELECT mime, data FROM logo WHERE id = 1").fetchone()

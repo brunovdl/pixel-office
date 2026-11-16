@@ -168,7 +168,12 @@ class Simulator:
             await asyncio.gather(*loops, return_exceptions=True)
 
     def _reconcile(self) -> None:
-        active = [agent["id"] for agent in self.hub.config.agents() if agent["enabled"]]
+        # Agentes com ferramenta definida são do executor de verdade, não do simulador.
+        active = [
+            agent["id"]
+            for agent in self.hub.config.agents()
+            if agent["enabled"] and agent["tool"] is None
+        ]
         for agent_id in list(self._loops):
             if agent_id not in active:
                 self._loops.pop(agent_id).cancel()

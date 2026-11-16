@@ -31,3 +31,7 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# O script falso do Claude Code é texto dentro de uma string.
+"tests/test_executor.py" = ["E501"]

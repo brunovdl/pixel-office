@@ -71,8 +71,27 @@ export interface AgentConfig {
   updatedAt: number;
 }
 
+export type PermissionMode = "acceptEdits" | "auto" | "bypassPermissions";
+
+export interface RunnerConfig {
+  workspaceDir: string;
+  permissionMode: PermissionMode;
+  timeoutMinutes: number;
+  maxTurns: number | null;
+  maxParallel: number;
+}
+
+/** Situação do executor no servidor (GET /api/runtime). */
+export interface Runtime {
+  executor: boolean;
+  tools: Partial<Record<ToolId, { installed: boolean; version: string | null; command: string }>>;
+  workspace: { path: string; exists: boolean; git: boolean } | null;
+  running: { agentId: string; taskId: number }[];
+}
+
 export interface PublicConfig {
   office: OfficeConfig;
+  runner: RunnerConfig;
   credentials: CredentialConfig[];
   mcps: McpConfig[];
   agents: AgentConfig[];
@@ -86,6 +105,13 @@ export function toolReady(tool: ToolId, credentials: readonly CredentialConfig[]
 
 export const EMPTY_CONFIG: PublicConfig = {
   office: { name: "Pixel Office", masterPrompt: "", promptFiles: [], logo: null },
+  runner: {
+    workspaceDir: "",
+    permissionMode: "acceptEdits",
+    timeoutMinutes: 30,
+    maxTurns: null,
+    maxParallel: 1,
+  },
   credentials: [],
   mcps: [],
   agents: [],
@@ -156,6 +182,14 @@ export class ConfigApi extends ApiClient {
 
   saveOffice(data: Omit<OfficeConfig, "logo">): Promise<OfficeConfig> {
     return this.request("PUT", "/api/config/office", data) as Promise<OfficeConfig>;
+  }
+
+  saveRunner(data: RunnerConfig): Promise<RunnerConfig> {
+    return this.request("PUT", "/api/config/runner", data) as Promise<RunnerConfig>;
+  }
+
+  runtime(): Promise<Runtime> {
+    return this.request("GET", "/api/runtime") as Promise<Runtime>;
   }
 
   uploadLogo(file: Blob): Promise<OfficeConfig> {

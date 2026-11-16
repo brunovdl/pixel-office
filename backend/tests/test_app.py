@@ -326,3 +326,25 @@ def test_roster_puts_configured_team_in_the_office():
         assert [a["id"] for a in agents] == ["orq", "spec", "be", "fe", "qa", "rev"]
         client.patch("/api/config/agents/qa", json={"enabled": False})
         assert "qa" not in [a["id"] for a in client.get("/api/state").json()["agents"]]
+
+
+def test_runner_settings_and_runtime(tmp_path):
+    from pixel_office.executor import Executor
+
+    hub = Hub()
+    executor = Executor(hub, data_dir=tmp_path, claude_bin="comando-que-nao-existe")
+    with TestClient(create_app(hub, executor=executor)) as client:
+        saved = client.put(
+            "/api/config/runner",
+            json={"workspaceDir": str(tmp_path), "permissionMode": "bypassPermissions"},
+        ).json()
+        assert saved["permissionMode"] == "bypassPermissions"
+        assert saved["timeoutMinutes"] == 30
+        assert client.put("/api/config/runner", json={"maxParallel": 0}).status_code == 422
+        runtime = client.get("/api/runtime").json()
+        assert runtime["executor"] is True
+        assert runtime["tools"]["claude_code"]["installed"] is False
+        assert runtime["workspace"]["exists"] is True
+
+    with TestClient(create_app(Hub())) as client:
+        assert client.get("/api/runtime").json()["executor"] is False

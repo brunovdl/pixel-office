@@ -33,7 +33,9 @@ from .config import (
     McpCreate,
     McpUpdate,
     OfficeSettings,
+    RunnerSettings,
 )
+from .executor import Executor
 from .hub import Hub, Subscription
 from .roster import Roster
 from .simulator import Simulator
@@ -53,6 +55,7 @@ def create_app(
     simulator: Simulator | None = None,
     static_dir: Path | None = None,
     roster: bool = False,
+    executor: Executor | None = None,
 ) -> FastAPI:
     """Monta a aplicação.
 
@@ -61,20 +64,22 @@ def create_app(
     allowed_origins: origens de navegador aceitas no WebSocket, além da própria.
     simulator: se definido, roda enquanto a aplicação estiver no ar.
     roster: se verdadeiro, os agentes ativos da configuração entram no escritório.
+    executor: se definido, roda as ferramentas de verdade nas tarefas dos agentes.
     static_dir: pasta com o frontend compilado, servida em `/`.
     """
     hub = hub or Hub()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        task = asyncio.create_task(simulator.run()) if simulator else None
+        jobs = [asyncio.create_task(part.run()) for part in (simulator, executor) if part]
         try:
             yield
         finally:
-            if task:
-                task.cancel()
+            for job in jobs:
+                job.cancel()
+            for job in jobs:
                 with suppress(asyncio.CancelledError):
-                    await task
+                    await job
 
     app = FastAPI(title="Pixel Office", lifespan=lifespan)
     app.state.hub = hub
@@ -206,6 +211,16 @@ def create_app(
     @app.get("/api/config", dependencies=auth)
     async def get_config() -> dict[str, Any]:
         return config.public()
+
+    @app.put("/api/config/runner", dependencies=auth)
+    async def put_runner(data: RunnerSettings) -> dict[str, Any]:
+        return config.set_runner(data)
+
+    @app.get("/api/runtime", dependencies=auth)
+    async def runtime() -> dict[str, Any]:
+        if executor is None:
+            return {"tools": {}, "workspace": None, "running": [], "executor": False}
+        return {**executor.status(), "executor": True}
 
     @app.put("/api/config/office", dependencies=auth)
     async def put_office(data: OfficeSettings) -> dict[str, Any]:

@@ -756,3 +756,9 @@ button:disabled { cursor: progress; opacity: 0.6; }
 @media (max-width: 560px) {
   .brand-name { display: none; }
 }
+
+.runtime { margin: 4px 0 14px; padding: 10px; border: 1px solid var(--line-soft); background: var(--panel-2); }
+.runtime-list { display: flex; flex-direction: column; gap: 4px; }
+.runtime-list .is-ok { color: var(--ok); }
+.runtime-list .is-bad { color: var(--warn); }
+.cfg-note.is-warn { color: var(--warn); }

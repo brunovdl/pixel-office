@@ -19,6 +19,8 @@ import {
   type AgentConfig,
   type ConfigApi,
   type CredentialId,
+  type PermissionMode,
+  type Runtime,
   type McpConfig,
   type PublicConfig,
   TOOLS,
@@ -30,17 +32,18 @@ import { shirtColor } from "./look";
 import type { OfficeState } from "./state";
 import { button, el } from "./ui";
 
-type Section = "office" | "keys" | "mcps" | "agents";
+type Section = "office" | "runner" | "keys" | "mcps" | "agents";
 
 const SECTIONS: readonly { id: Section; label: string; icon: string }[] = [
   { id: "office", label: "Escritório", icon: "▣" },
+  { id: "runner", label: "Execução", icon: "▶" },
   { id: "keys", label: "Credenciais", icon: "⚿" },
   { id: "mcps", label: "MCPs", icon: "⛁" },
   { id: "agents", label: "Agentes", icon: "☺" },
 ];
 
 const NOT_WIRED =
-  "Os agentes ainda são simulados. Ferramenta, modelo, prompt e MCPs ficam salvos e passam a valer quando a integração com a ferramenta for ligada.";
+  "Agentes com Claude Code rodam de verdade no servidor (veja Execução). Cursor e Antigravity ainda não têm integração, e agentes sem ferramenta só aparecem no modo simulado.";
 
 function note(text: string): HTMLElement {
   return el("p", "cfg-note", text);
@@ -95,6 +98,7 @@ export class ConfigView {
   private readonly navButtons = new Map<Section, HTMLButtonElement>();
   private readonly panes = new Map<Section, HTMLElement>();
   private readonly office: OfficePane;
+  private readonly runner: RunnerPane;
   private readonly keys: KeysPane;
   private readonly mcps: McpsPane;
   private readonly agents: AgentsPane;
@@ -102,7 +106,7 @@ export class ConfigView {
   constructor(body: HTMLElement, api: ConfigApi | null) {
     if (!api) {
       body.append(el("p", "empty pad", "As configurações precisam do backend. Abra a página sem ?sim."));
-      this.office = this.keys = this.mcps = this.agents = null as never;
+      this.office = this.runner = this.keys = this.mcps = this.agents = null as never;
       return;
     }
     this.nav.setAttribute("aria-label", "Seções");
@@ -113,12 +117,14 @@ export class ConfigView {
       this.nav.append(node);
     }
     this.office = new OfficePane(api);
+    this.runner = new RunnerPane(api);
     this.keys = new KeysPane(api);
     this.mcps = new McpsPane(api);
     this.agents = new AgentsPane(api);
     const content = el("div", "cfg-content");
     for (const [id, pane] of [
       ["office", this.office.el],
+      ["runner", this.runner.el],
       ["keys", this.keys.el],
       ["mcps", this.mcps.el],
       ["agents", this.agents.el],
@@ -153,6 +159,7 @@ export class ConfigView {
     const config = this.config;
     if (!config) return;
     if (this.section === "office") this.office.update(config, this.version);
+    if (this.section === "runner") this.runner.update(config, this.version);
     if (this.section === "keys") this.keys.update(config);
     if (this.section === "mcps") this.mcps.update(config, this.version);
     if (this.section === "agents") this.agents.update(config, this.version, this.state);
@@ -291,6 +298,169 @@ class OfficePane {
         });
         this.dirty = false;
         this.saved.textContent = "Salvo.";
+      });
+    });
+    return form;
+  }
+}
+
+// ----------------------------------------------------------------- execução
+
+const PERMISSIONS: readonly { value: PermissionMode; label: string; help: string }[] = [
+  {
+    value: "acceptEdits",
+    label: "Só editar arquivos",
+    help: "Edita arquivos e roda comandos de leitura. Outros comandos (testes, instalação) são recusados, porque não há ninguém para aprovar.",
+  },
+  {
+    value: "auto",
+    label: "Automático",
+    help: "Um classificador do Claude Code aprova ou recusa cada ação. Pode não estar disponível em todos os planos.",
+  },
+  {
+    value: "bypassPermissions",
+    label: "Liberar tudo",
+    help: "Roda qualquer comando sem pedir. Use só num servidor isolado, sem outros segredos além dos do próprio projeto.",
+  },
+];
+
+class RunnerPane {
+  readonly el = el("section", "cfg-pane");
+  private readonly statusBox = el("div", "runtime");
+  private readonly formBox = el("div");
+  private readonly saved = el("p", "muted cfg-saved");
+  private dirty = false;
+  private shownVersion = -1;
+
+  constructor(private readonly api: ConfigApi) {
+    this.saved.setAttribute("role", "status");
+    this.el.append(
+      el("h3", "cfg-title", "Execução no servidor"),
+      note(
+        "Agentes cuja ferramenta é o Claude Code pegam a tarefa pendente mais antiga atribuída a eles, rodam na pasta do projeto e devolvem a tarefa em revisão com um resumo, ou bloqueada com o motivo. Mover a tarefa para outro status interrompe a execução.",
+      ),
+      this.statusBox,
+      this.formBox,
+      this.saved,
+    );
+  }
+
+  update(config: PublicConfig, version: number): void {
+    void this.loadStatus();
+    if (version === this.shownVersion || this.dirty) return;
+    this.shownVersion = version;
+    this.formBox.replaceChildren(this.form(config));
+  }
+
+  private async loadStatus(): Promise<void> {
+    let runtime: Runtime;
+    try {
+      runtime = await this.api.runtime();
+    } catch {
+      this.statusBox.replaceChildren(el("p", "form-error", "Não foi possível ler a situação do servidor."));
+      return;
+    }
+    const line = (ok: boolean, text: string) => el("li", ok ? "is-ok" : "is-bad", `${ok ? "✓" : "✗"} ${text}`);
+    const list = el("ul", "runtime-list");
+    if (!runtime.executor) {
+      list.append(line(false, "Executor desligado neste servidor."));
+    } else {
+      const claude = runtime.tools.claude_code;
+      list.append(
+        line(
+          Boolean(claude?.installed),
+          claude?.installed
+            ? `Claude Code instalado: ${claude.version}`
+            : `Claude Code não encontrado (comando ${claude?.command ?? "claude"}). Instale com npm install -g @anthropic-ai/claude-code.`,
+        ),
+      );
+      const workspace = runtime.workspace;
+      if (!workspace?.path) list.append(line(false, "Pasta do projeto não definida."));
+      else if (!workspace.exists) list.append(line(false, `A pasta não existe: ${workspace.path}`));
+      else {
+        list.append(line(true, `Pasta do projeto: ${workspace.path}`));
+        if (!workspace.git) list.append(line(false, "A pasta não é um repositório git; as mudanças não terão histórico."));
+      }
+      const running = runtime.running.length;
+      list.append(el("li", "muted", running ? `${running} execução em andamento.` : "Nenhuma execução em andamento."));
+    }
+    this.statusBox.replaceChildren(list);
+  }
+
+  private form(config: PublicConfig): HTMLElement {
+    const runner = config.runner;
+    const form = el("form", "form");
+    const workspace = textInput(runner.workspaceDir, 1000, "/caminho/do/projeto");
+    const permission = select(
+      PERMISSIONS.map((p) => ({ value: p.value, label: p.label })),
+      runner.permissionMode,
+    );
+    const help = el("p", "cfg-note");
+    const syncHelp = () => {
+      const chosen = PERMISSIONS.find((p) => p.value === permission.value);
+      help.textContent = chosen?.help ?? "";
+      help.classList.toggle("is-warn", permission.value === "bypassPermissions");
+    };
+    permission.addEventListener("change", syncHelp);
+    syncHelp();
+
+    const number = (value: number | null, min: number, max: number, placeholder = "") => {
+      const input = el("input", "input");
+      input.type = "number";
+      input.min = String(min);
+      input.max = String(max);
+      input.placeholder = placeholder;
+      input.value = value === null ? "" : String(value);
+      return input;
+    };
+    const timeout = number(runner.timeoutMinutes, 1, 480);
+    timeout.required = true;
+    const maxTurns = number(runner.maxTurns, 1, 1000, "sem limite");
+    const parallel = number(runner.maxParallel, 1, 8);
+    parallel.required = true;
+
+    const grid = el("div", "form-grid");
+    grid.append(
+      field("Tempo limite por tarefa (min)", timeout),
+      field("Máximo de turnos", maxTurns),
+      field("Execuções ao mesmo tempo", parallel),
+    );
+    const error = el("p", "form-error");
+    error.setAttribute("role", "alert");
+    const save = el("button", "btn-primary", "Salvar");
+    save.type = "submit";
+    const actions = el("div", "form-actions");
+    actions.append(save);
+
+    form.append(
+      field("Pasta do projeto no servidor", workspace),
+      note("O repositório do produto, já clonado no servidor. Os agentes trabalham direto nesta pasta."),
+      field("Permissões do Claude Code", permission),
+      help,
+      grid,
+      note(
+        "Com mais de uma execução ao mesmo tempo, os agentes mexem na mesma pasta e podem se atrapalhar. Deixe 1 até haver uma cópia por agente.",
+      ),
+      error,
+      actions,
+    );
+    form.addEventListener("input", () => {
+      this.dirty = true;
+      this.saved.textContent = "";
+    });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void submitting(form, error, async () => {
+        await this.api.saveRunner({
+          workspaceDir: workspace.value.trim(),
+          permissionMode: permission.value as PermissionMode,
+          timeoutMinutes: Number(timeout.value),
+          maxTurns: maxTurns.value ? Number(maxTurns.value) : null,
+          maxParallel: Number(parallel.value),
+        });
+        this.dirty = false;
+        this.saved.textContent = "Salvo.";
+        void this.loadStatus();
       });
     });
     return form;

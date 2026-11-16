@@ -7,8 +7,9 @@ repositório, mostrado como um escritório em pixel.
 
 ## Estado atual
 
-O escritório recebe eventos do backend por WebSocket. Nenhuma ferramenta de
-desenvolvimento está ligada ainda: quem gera os eventos é um time simulado.
+O escritório recebe eventos do backend por WebSocket. Agentes com o Claude Code
+como ferramenta trabalham de verdade no servidor; Cursor e Antigravity ainda não
+têm integração. Com `--simulate`, os agentes sem ferramenta viram um time simulado.
 
 | Parte | Situação |
 | --- | --- |
@@ -16,7 +17,7 @@ desenvolvimento está ligada ainda: quem gera os eventos é um time simulado.
 | Backend em Python (`backend/`) | Funciona: estado, WebSocket, entrada de eventos por HTTP, tarefas, specs e configuração em SQLite |
 | Configurações | Funciona: nome, logo, prompt mestre, credenciais, MCPs e agentes |
 | Protocolo de eventos | `backend/pixel_office/events.py` e `frontend/src/events.ts` |
-| Integração com Claude Code | Não começou |
+| Integração com Claude Code | Funciona no servidor (`claude -p`), sem ponte de decisões |
 | Integração com Cursor | Não começou |
 | Integração com Antigravity | Não começou |
 
@@ -57,6 +58,7 @@ Sem backend, `http://localhost:5173/?sim` roda um simulador dentro do navegador
 | `--simulate` | desligado | Roda o time simulado |
 | `--speed N` | 1 | Acelera o simulador |
 | `--seed N` | 1 | Semente do simulador |
+| `--claude-bin`, `PIXEL_OFFICE_CLAUDE_BIN` | `claude` | Comando do Claude Code no servidor |
 | `--db`, `PIXEL_OFFICE_DB` | `backend/data/pixel-office.db` | Arquivo SQLite de tarefas, specs e configuração. Com `--simulate` e sem `--db`, fica só em memória |
 | `--host`, `PIXEL_OFFICE_HOST` | `127.0.0.1` | Endereço de escuta |
 | `--port`, `PIXEL_OFFICE_PORT` | `8000` | Porta |
@@ -97,6 +99,8 @@ adaptador (simulador hoje) -> Hub -> WebSocket -> reduce(estado, evento) -> cena
 | `board.py` | Tarefas e specs em SQLite, com validação |
 | `config.py` | Configuração: escritório, logo, chaves de API, MCPs e agentes; segredos criptografados |
 | `roster.py` | Põe no escritório os agentes ativos da configuração e tira os desativados |
+| `executor.py` | Roda o Claude Code nas tarefas dos agentes e publica cada passo |
+| `claude_code.py` | Traduz a saída `stream-json` do Claude Code para os eventos |
 | `app.py` | Rotas HTTP e o WebSocket |
 | `simulator.py` | Time falso que publica no hub |
 | `__main__.py` | Linha de comando |
@@ -126,6 +130,8 @@ curl -X POST localhost:8000/api/events -H 'content-type: application/json' \
 | `GET/PATCH/DELETE /api/specs/{id}` | Lê com texto e critérios, altera ou exclui uma spec |
 | `GET /api/config` | Configuração sem os segredos (chaves e valores de MCP aparecem só como `…abcd`) |
 | `PUT /api/config/office` | Nome, prompt mestre e arquivos em que ele é publicado |
+| `PUT /api/config/runner` | Pasta do projeto, permissões, tempo limite, turnos e execuções simultâneas |
+| `GET /api/runtime` | Situação do executor: Claude Code instalado, pasta do projeto, execuções em andamento |
 | `GET/PUT/DELETE /api/config/logo` | Logo; o envio é o arquivo puro no corpo (PNG, JPEG, WEBP ou GIF, até 2 MB) |
 | `PUT/DELETE /api/config/keys/{credencial}` | Credencial de ferramenta: `claude_oauth`, `anthropic`, `cursor`, `gemini` |
 | `POST /api/config/mcps`, `PATCH/DELETE /api/config/mcps/{id}` | Servidores MCP; nos segredos, `null` mantém o valor salvo |
@@ -233,6 +239,7 @@ O botão **⚙ Config** abre o painel de configuração do escritório:
 
 | Seção | O que configura |
 | --- | --- |
+| Execução | Pasta do projeto no servidor, permissões do Claude Code, tempo limite por tarefa, máximo de turnos e execuções ao mesmo tempo, com a situação do servidor |
 | Escritório | Nome (topo e título da aba), logo (topo e quadro na parede do escritório, com envio por botão ou arrastando a imagem) e prompt mestre, com a escolha de publicar como CLAUDE.md, AGENTS.md e GEMINI.md |
 | Credenciais | O que cada ferramenta lê: Claude Code (`CLAUDE_CODE_OAUTH_TOKEN` ou `ANTHROPIC_API_KEY`), Cursor (`CURSOR_API_KEY`) e Antigravity (`GEMINI_API_KEY`, ou o login de uma sessão interativa) |
 | MCPs | Servidores por comando local (stdio, com argumentos e variáveis de ambiente) ou remoto (http, com cabeçalhos) |
@@ -249,9 +256,52 @@ a tela mostra só os quatro últimos caracteres. Quem tiver o banco **e** o
 `secret.key` consegue abrir os segredos, então guarde os dois com o mesmo cuidado. Se
 o `secret.key` for perdido, os segredos salvos precisam ser cadastrados de novo.
 
-Ferramenta, modelo, prompts e MCPs ficam salvos, mas ainda não têm efeito: os
-agentes são simulados até a integração com a ferramenta ser ligada. O prompt mestre também só vira
-arquivo quando o harness estiver ligado a um repositório.
+Para agentes com o Claude Code, ferramenta, modelo, prompts e MCPs valem já (veja
+"Executor no servidor"). Para Cursor e Antigravity ficam salvos até a integração
+deles existir. O prompt mestre vai para o agente como instrução de sistema; ainda
+não é gravado como arquivo no repositório.
+
+### Executor no servidor
+
+O executor procura, a cada poucos segundos e a cada mudança, a tarefa pendente mais
+antiga de cada agente ativo cuja ferramenta é o Claude Code. Para rodar, ele precisa
+de três coisas, e a seção Execução mostra o que falta:
+
+1. o Claude Code instalado no servidor (`npm install -g @anthropic-ai/claude-code`);
+2. a pasta do projeto, um repositório já clonado no servidor;
+3. a credencial do Claude Code (token OAuth ou chave da API Anthropic).
+
+Se faltar algo, o agente mostra o motivo no escritório e a tarefa continua pendente.
+Quando roda:
+
+- a tarefa vai para "em andamento" e o executor chama
+  `claude -p --output-format stream-json --verbose` na pasta do projeto;
+- o texto da tarefa e da spec ligada (critérios e texto) vai pela entrada padrão; o
+  prompt mestre e o prompt do agente vão como instrução de sistema;
+- só os MCPs escolhidos para o agente são carregados (`--strict-mcp-config`), com os
+  segredos num arquivo temporário legível só pelo dono, apagado no fim;
+- o processo recebe um ambiente mínimo: a credencial do Claude Code, o proxy da rede
+  e uma pasta pessoal própria em `backend/data/homes/claude_code`, sem o token do
+  harness nem outros segredos;
+- cada leitura, edição, comando e mensagem vira evento no escritório e na conversa;
+- no fim, a tarefa vai para "em revisão" com o resumo do agente na descrição, ou para
+  "bloqueada" com o motivo (erro, saída sem resultado, tempo limite).
+
+Mover a tarefa para outro status, excluí-la, desativar o agente ou trocar a ferramenta
+dele interrompe a execução.
+
+Sem ninguém para aprovar, o Claude Code recusa o que pediria permissão. O padrão
+"Só editar arquivos" deixa editar e ler, mas recusa comandos como rodar testes;
+"Liberar tudo" (`bypassPermissions`) roda qualquer comando e só deve ser usado num
+servidor isolado.
+
+Limites atuais:
+
+- as perguntas que o agente faria não chegam à janela de Decisões: ele é instruído a
+  escolher a opção mais segura e registrar a dúvida no resumo;
+- os agentes trabalham direto na pasta do projeto, sem branch nem pull request; por
+  isso o padrão é uma execução por vez;
+- Cursor e Antigravity ainda não rodam.
 
 ## Próximos passos
 
@@ -262,6 +312,8 @@ Há dois jeitos de ligar cada ferramenta, e eles se complementam:
 | No servidor | O backend roda a ferramenta sem interface, com a credencial, o modelo, o prompt e os MCPs do agente, e traduz a saída em eventos | `claude -p --output-format stream-json`, `cursor-agent -p --output-format stream-json`, `agy -p` |
 | Ponte do computador | A ferramenta roda no computador do usuário e os hooks dela mandam cada passo para `POST /api/events` (ou para um endpoint que traduz o formato dela) | Hooks HTTP do Claude Code, hooks do Antigravity |
 
-1. Integração com o Claude Code.
-2. Integração com Cursor e Antigravity, reaproveitando o mesmo formato.
-3. Entrada de tarefas pela tela, para dizer aos agentes o que fazer.
+1. Uma cópia do repositório por agente (git worktree) e entrega por branch, para
+   rodar agentes em paralelo sem conflito.
+2. Ponte de decisões: levar as perguntas e pedidos de permissão do Claude Code para a
+   janela de Decisões.
+3. Integração com Cursor (`cursor-agent -p`) e Antigravity (`agy -p`).

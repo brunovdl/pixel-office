@@ -142,3 +142,19 @@ def test_without_agents_it_stays_idle():
         return hub
 
     assert asyncio.run(scenario()).state.agents == {}
+
+
+def test_leaves_agents_with_a_tool_to_the_executor():
+    async def scenario():
+        hub = team_hub()
+        hub.config.update_agent("be", AgentUpdate(tool="claude_code"))
+        task = asyncio.create_task(Simulator(hub, seed=3, speed=2000).run())
+        await asyncio.sleep(0.4)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return hub
+
+    hub = asyncio.run(scenario())
+    assert "be" not in hub.state.agents
+    assert "fe" in hub.state.agents

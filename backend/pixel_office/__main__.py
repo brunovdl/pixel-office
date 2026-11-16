@@ -11,6 +11,7 @@ import uvicorn
 from .app import DEFAULT_ORIGINS, create_app
 from .board import Board
 from .config import Config
+from .executor import Executor
 from .hub import Hub
 from .simulator import Simulator
 
@@ -35,6 +36,11 @@ def main() -> None:
     parser.add_argument("--simulate", action="store_true", help="roda o time simulado")
     parser.add_argument("--seed", type=int, default=1, help="semente do simulador")
     parser.add_argument("--speed", type=float, default=1.0, help="velocidade do simulador")
+    parser.add_argument(
+        "--claude-bin",
+        default=env.get("PIXEL_OFFICE_CLAUDE_BIN", "claude"),
+        help="comando do Claude Code no servidor",
+    )
     parser.add_argument(
         "--db",
         default=env.get("PIXEL_OFFICE_DB"),
@@ -65,6 +71,11 @@ def main() -> None:
         simulator=Simulator(hub, seed=args.seed, speed=args.speed) if args.simulate else None,
         static_dir=FRONTEND_DIST if FRONTEND_DIST.is_dir() else None,
         roster=True,
+        executor=Executor(
+            hub,
+            data_dir=DEFAULT_DB.parent if db == ":memory:" else Path(db).parent,
+            claude_bin=args.claude_bin,
+        ),
     )
     uvicorn.run(app, host=args.host, port=args.port)
 
